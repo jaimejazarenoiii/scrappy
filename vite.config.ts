@@ -7,6 +7,11 @@ export default defineConfig({
     port: 5173,
     open: true,
   },
+  base: '/junkshop-management-system/',
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+  },
 });
 
 

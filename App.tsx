@@ -138,41 +138,14 @@ function AppContent() {
       }
     });
 
-    console.log('Balance calculation:', {
-      cashEntries: cashEntries.length,
-      totalFromCashEntries: cashEntries.reduce((sum, entry) => {
-        switch (entry.type) {
-          case 'opening':
-          case 'adjustment':
-            return sum + entry.amount;
-          case 'expense':
-            return sum - entry.amount;
-          case 'transaction':
-            return sum + entry.amount;
-          default:
-            return sum;
-        }
-      }, 0),
-      completedTransactions: transactions.filter(t => t.status === 'completed').length,
-      completedBuyTransactions: transactions.filter(t => t.status === 'completed' && t.type === 'buy'),
-      completedSellTransactions: transactions.filter(t => t.status === 'completed' && t.type === 'sell'),
-      finalBalance: balance
-    });
+
 
     return balance;
   };
 
   const currentBalance = calculateCurrentBalance();
 
-  // Debug: Log current state for troubleshooting
-  console.log('App state debug:', {
-    currentView,
-    userRole: user?.role,
-    transactionsCount: transactions.length,
-    cashEntriesCount: cashEntries.length,
-    currentBalance,
-    allTransactions: transactions.map(t => ({ id: t.id, type: t.type, status: t.status, total: t.total }))
-  });
+
 
   const handleTransactionUpdate = async (updatedTransaction: Transaction) => {
     try {
@@ -374,9 +347,7 @@ function AppContent() {
           />
         );
       case 'all-transactions':
-        console.log('Navigating to all-transactions, user role:', user.role, 'has permission:', hasPermission('view_all_transactions'));
         if (!hasPermission('view_all_transactions')) {
-          console.log('Permission denied for view_all_transactions, redirecting to dashboard');
           setCurrentView('dashboard');
           return null;
         }

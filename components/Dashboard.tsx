@@ -577,10 +577,7 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
             </Button>
             
             <Button
-              onClick={() => {
-                console.log('All Transactions button clicked from dashboard');
-                onNavigate('all-transactions');
-              }}
+              onClick={() => onNavigate('all-transactions')}
               className="h-24 bg-gradient-to-br from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white shadow-lg"
             >
               <div className="flex flex-col items-center space-y-2">
@@ -674,10 +671,7 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
             <div className="pt-3 border-t border-gray-200">
               <Button 
                 variant="outline" 
-                onClick={() => {
-                  console.log('View All Transactions button clicked');
-                  onNavigate('all-transactions');
-                }}
+                onClick={() => onNavigate('all-transactions')}
                 className="w-full"
               >
                 View All {filteredData.transactionCount} Transactions

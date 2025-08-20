@@ -8,8 +8,11 @@
     "build": "vite build",
     "preview": "vite preview --open",
     "fix:imports": "node scripts/fix-imports.mjs",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist"
   },
+  "homepage": "https://jaimejazarenoiv.github.io/junkshop-management-system",
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -63,6 +66,7 @@
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^4.7.0",
     "autoprefixer": "^10.4.21",
+    "gh-pages": "^6.1.1",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.15",
     "typescript": "^5.9.2",
