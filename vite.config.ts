@@ -7,7 +7,7 @@ export default defineConfig({
     port: 5173,
     open: true,
   },
-  base: '/junkshop-management-system/',
+  base: '/scrappy/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',

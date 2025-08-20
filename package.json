@@ -12,7 +12,7 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist"
   },
-  "homepage": "https://jaimejazarenoiv.github.io/junkshop-management-system",
+  "homepage": "https://jaimejazarenoiii.github.io/scrappy",
   "keywords": [],
   "author": "",
   "license": "ISC",
