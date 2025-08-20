@@ -15,7 +15,8 @@ import {
   TrendingDown,
   DollarSign,
   Receipt,
-  AlertCircle
+  AlertCircle,
+  PhilippinePeso
 } from 'lucide-react';
 import { CashEntry } from '../services/supabaseService';
 
@@ -73,7 +74,7 @@ export default function CashManagement({ cashEntries, onBack, onAddEntry, curren
       type: 'opening',
       amount: amount,
       description: 'Daily opening balance',
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       employee: currentEmployee
     };
     
@@ -92,7 +93,7 @@ export default function CashManagement({ cashEntries, onBack, onAddEntry, curren
       type: 'adjustment',
       amount: amount,
       description: 'Additional funds added',
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       employee: currentEmployee
     };
     
@@ -111,7 +112,7 @@ export default function CashManagement({ cashEntries, onBack, onAddEntry, curren
       type: 'expense',
       amount: -amount, // Negative for expenses
       description: `${newExpense.type}: ${newExpense.description}`,
-      timestamp: new Date(),
+      timestamp: new Date().toISOString(),
       employee: currentEmployee
     };
     
@@ -195,7 +196,7 @@ export default function CashManagement({ cashEntries, onBack, onAddEntry, curren
                   {formatCurrency(currentBalance)}
                 </p>
               </div>
-              <DollarSign className="h-8 w-8 text-purple-500" />
+              <PhilippinePeso className="h-8 w-8 text-purple-500" />
             </div>
           </CardContent>
         </Card>

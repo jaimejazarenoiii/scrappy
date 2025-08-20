@@ -8,3 +8,4 @@ DROP FUNCTION IF EXISTS update_employee_stats();
 -- Note: The employee statistics (sessions_handled, current_advances) 
 -- will be updated through the application code instead of database triggers
 -- This is actually better for debugging and maintainability
+

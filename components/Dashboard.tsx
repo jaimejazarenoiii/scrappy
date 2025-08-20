@@ -28,6 +28,7 @@ import { cn } from './ui/utils';
 interface DashboardProps {
   onNavigate: (view: string) => void;
   transactions: Transaction[];
+  currentBalance: number;
   cashEntries: any[];
   onTransactionClick?: (transactionId: string) => void;
   userRole: 'owner' | 'employee';
@@ -35,7 +36,7 @@ interface DashboardProps {
 
 type DateFilter = 'today' | 'week' | 'month' | 'year' | 'custom';
 
-export default function Dashboard({ onNavigate, transactions, cashEntries, onTransactionClick, userRole }: DashboardProps) {
+export default function Dashboard({ onNavigate, transactions, cashEntries, onTransactionClick, userRole, currentBalance }: DashboardProps) {
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -107,11 +108,15 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
 
     const buyTransactions = filtered.filter(t => t.type === 'buy');
     const sellTransactions = filtered.filter(t => t.type === 'sell');
+    // Only read from completed transactions for calculations
+    const completedTransactions = filtered.filter(t => t.status === 'completed');
+    const completedBuyTransactions = completedTransactions.filter(t => t.type === 'buy');
+    const completedSellTransactions = completedTransactions.filter(t => t.type === 'sell');
     
-    const totalBought = buyTransactions.reduce((sum, t) => sum + t.total, 0);
-    const totalSold = sellTransactions.reduce((sum, t) => sum + t.total, 0);
-    const totalExpenses = filtered.reduce((sum, t) => sum + (t.expenses || 0), 0);
-    const netProfit = totalSold - totalBought - totalExpenses;
+    const completedTotalBought = completedBuyTransactions.reduce((sum, t) => sum + t.total, 0);
+    const completedTotalSold = completedSellTransactions.reduce((sum, t) => sum + t.total, 0);
+    const completedTotalExpenses = completedTransactions.reduce((sum, t) => sum + (t.expenses || 0), 0);
+    const completedNetProfit = completedTotalSold - completedTotalBought - completedTotalExpenses;
 
     // Recent transactions from filtered data
     const recentTransactions = filtered.slice(0, 5);
@@ -119,10 +124,10 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
     return {
       transactions: filtered,
       recentTransactions,
-      totalBought,
-      totalSold,
-      totalExpenses,
-      netProfit,
+      totalBought: completedTotalBought,
+      totalSold: completedTotalSold,
+      totalExpenses: completedTotalExpenses,
+      netProfit: completedNetProfit,
       transactionCount: filtered.length,
       buyCount: buyTransactions.length,
       sellCount: sellTransactions.length
@@ -177,95 +182,98 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
         </div>
 
         {/* Employee's Transactions */}
-        <Card className="backdrop-blur-sm bg-white/80 border-0 shadow-xl shadow-gray-900/10">
-          <CardHeader className="bg-gradient-to-r from-gray-50/50 to-emerald-50/50 border-b border-gray-200/60">
-            <CardTitle className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="p-2 bg-gradient-to-br from-emerald-100 to-teal-100 rounded-lg">
-                  <Clock className="h-5 w-5 text-emerald-700" />
-                </div>
-                <span className="text-lg font-semibold text-gray-800">My Transactions</span>
-              </div>
-              <Badge variant="outline" className="text-xs bg-white/60 border-emerald-200">
-                {transactions.length} total
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 p-6">
-            {transactions.length > 0 ? (
-              transactions.slice(0, 10).map((transaction) => (
-                <div
-                  key={transaction.id}
-                  className="flex items-center justify-between p-4 bg-gradient-to-r from-white/60 to-gray-50/60 backdrop-blur-sm rounded-xl border border-gray-200/60 hover:bg-gradient-to-r hover:from-white/80 hover:to-gray-50/80 cursor-pointer transition-all duration-300 hover:shadow-lg hover:shadow-gray-900/10 transform hover:scale-[1.02]"
-                  onClick={() => handleTransactionClick(transaction.id)}
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                      transaction.type === 'buy' 
-                        ? 'bg-red-100 text-red-600' 
-                        : 'bg-green-100 text-green-600'
-                    }`}>
-                      {transaction.type === 'buy' ? (
-                        <ShoppingCart className="h-5 w-5" />
-                      ) : (
-                        <DollarSign className="h-5 w-5" />
-                      )}
-                    </div>
-                    <div>
-                      <div className="flex items-center space-x-2">
-                        <p className="font-medium">
-                          #{transaction.id} - {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
-                        </p>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
-                          transaction.status === 'completed' ? 'bg-green-100 text-green-800' :
-                          transaction.status === 'for-payment' ? 'bg-blue-100 text-blue-800' :
-                          transaction.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-red-100 text-red-800'
-                        }`}>
-                          {transaction.status === 'completed' ? 'Completed' :
-                           transaction.status === 'for-payment' ? 'For Payment' :
-                           transaction.status === 'in-progress' ? 'In Progress' :
-                           'Cancelled'}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-500">
-                        {formatDate(transaction.timestamp)} {formatTime(transaction.timestamp)}
-                        {transaction.customerName && ` • ${transaction.customerName}`}
-                      </p>
-                    </div>
+        <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Clock className="h-5 w-5" />
+              <span>Recent Transactions</span>
+            </div>
+            <Badge variant="outline" className="text-xs">
+              {getDateFilterLabel()}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {filteredData.recentTransactions.length > 0 ? (
+            filteredData.recentTransactions.map((transaction) => (
+              <div
+                key={transaction.id}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
+                onClick={() => handleTransactionClick(transaction.id)}
+              >
+                <div className="flex items-center space-x-3">
+                  <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                    transaction.type === 'buy' 
+                      ? 'bg-red-100 text-red-600' 
+                      : 'bg-green-100 text-green-600'
+                  }`}>
+                    {transaction.type === 'buy' ? (
+                      <ShoppingCart className="h-5 w-5" />
+                    ) : (
+                      <DollarSign className="h-5 w-5" />
+                    )}
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="text-right">
-                      <p className={`font-semibold ${
-                        transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'
+                  <div>
+                    <div className="flex items-center space-x-2">
+                      <p className="font-medium">
+                        #{transaction.id} - {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
+                      </p>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
+                        transaction.status === 'completed' ? 'bg-green-100 text-green-800' :
+                        transaction.status === 'for-payment' ? 'bg-blue-100 text-blue-800' :
+                        transaction.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-red-100 text-red-800'
                       }`}>
-                        {transaction.type === 'buy' ? '-' : '+'}{formatCurrency(transaction.total)}
-                      </p>
-                      <p className="text-sm text-gray-500">
-                        {transaction.items.length} item{transaction.items.length > 1 ? 's' : ''}
-                      </p>
+                        {transaction.status === 'completed' ? 'Completed' :
+                         transaction.status === 'for-payment' ? 'For Payment' :
+                         transaction.status === 'in-progress' ? 'In Progress' :
+                         'Cancelled'}
+                      </span>
                     </div>
-                    <Eye className="h-4 w-4 text-gray-400" />
+                    <p className="text-sm text-gray-500">
+                      {formatDate(transaction.timestamp)} {formatTime(transaction.timestamp)} • {transaction.employee}
+                    </p>
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="text-center py-8 text-gray-500">
-                <ShoppingCart className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                <p>No transactions yet</p>
-                <p className="text-sm">Start by buying or selling scrap materials</p>
+                <div className="flex items-center space-x-3">
+                  <div className="text-right">
+                    <p className={`font-semibold ${
+                      transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'
+                    }`}>
+                      {transaction.type === 'buy' ? '-' : '+'}{formatCurrency(transaction.total)}
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      {transaction.items.length} item{transaction.items.length > 1 ? 's' : ''}
+                    </p>
+                  </div>
+                  <Eye className="h-4 w-4 text-gray-400" />
+                </div>
               </div>
-            )}
+            ))
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <ShoppingCart className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <p>No transactions found for {getDateFilterLabel().toLowerCase()}</p>
+              <p className="text-sm">Try selecting a different date range</p>
+            </div>
+          )}
 
-            {transactions.length > 10 && (
-              <div className="pt-3 border-t border-gray-200">
-                <p className="text-sm text-gray-500 text-center">
-                  Showing 10 of {transactions.length} transactions
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          {filteredData.recentTransactions.length > 0 && filteredData.transactionCount > 5 && (
+            <div className="pt-3 border-t border-gray-200">
+              <Button 
+                variant="outline" 
+                  onClick={() =>
+                    onNavigate('all-transactions')
+                  }
+                className="w-full"
+              >
+                View All {filteredData.transactionCount} Transactions
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
       </div>
     );
   }
@@ -356,7 +364,7 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
               <div>
                 <p className="text-sm text-blue-600 font-semibold">Current Balance</p>
                 <p className="text-2xl font-bold text-blue-900 mt-2">
-                  {userRole === 'owner' ? formatCurrency(cashEntries.reduce((sum, entry) => sum + entry.amount, 0)) : '---'}
+                  {userRole === 'owner' ? formatCurrency(currentBalance) : '---'}
                 </p>
                 <p className="text-xs text-blue-600 mt-2 font-medium">Available Cash</p>
               </div>

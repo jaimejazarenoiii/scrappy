@@ -251,7 +251,7 @@ export default function AllTransactions({
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className={`grid gap-4 ${userRole === 'owner' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-6' : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-5'}`}>
         <Card className="bg-gradient-to-r from-blue-50 to-blue-100">
           <CardContent className="p-4">
             <div className="text-center">
@@ -297,14 +297,16 @@ export default function AllTransactions({
           </CardContent>
         </Card>
 
-        <Card className="bg-gradient-to-r from-purple-50 to-purple-100">
-          <CardContent className="p-4">
-            <div className="text-center">
-              <p className="text-lg font-bold text-purple-900">{formatCurrency(stats.totalValue)}</p>
-              <p className="text-xs text-purple-600">Net Value</p>
-            </div>
-          </CardContent>
-        </Card>
+        {userRole === 'owner' && (
+          <Card className="bg-gradient-to-r from-purple-50 to-purple-100">
+            <CardContent className="p-4">
+              <div className="text-center">
+                <p className="text-lg font-bold text-purple-900">{formatCurrency(stats.totalValue)}</p>
+                <p className="text-xs text-purple-600">Net Value</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Filters */}
@@ -521,3 +523,4 @@ export default function AllTransactions({
     </div>
   );
 }
+

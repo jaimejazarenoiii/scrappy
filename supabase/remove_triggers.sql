@@ -7,3 +7,4 @@ DROP FUNCTION IF EXISTS update_employee_advances();
 
 -- The application will handle updating employee statistics manually
 -- This eliminates any potential SQL interference during transaction saves
+

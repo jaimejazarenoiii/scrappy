@@ -110,35 +110,37 @@ function AppContent() {
 
   const selectedTransaction = transactions.find(t => t.id === selectedTransactionId);
 
-  // Calculate current balance considering cash entries and transactions
+  // Calculate current balance: Total money added - Total spent + Sales revenue
   const calculateCurrentBalance = () => {
-    // Start with cash entries (opening balance, adjustments, expenses)
-    let balance = cashEntries.reduce((sum, entry) => {
-      switch (entry.type) {
-        case 'opening':
-        case 'adjustment':
-          return sum + entry.amount; // Positive for opening balance and adjustments
-        case 'expense':
-          return sum - entry.amount; // Negative for expenses
-        case 'transaction':
-          return sum + entry.amount; // Transaction-related cash movements
-        default:
-          return sum;
-      }
-    }, 0);
+    // Calculate money added (opening balance + adjustments)
+    const moneyAdded = cashEntries
+      .filter(entry => entry.type === 'opening' || entry.type === 'adjustment')
+      .reduce((sum, entry) => sum + entry.amount, 0);
+    
+    // Calculate expenses (should be positive numbers, but we subtract them)
+    const expenses = cashEntries
+      .filter(entry => entry.type === 'expense')
+      .reduce((sum, entry) => sum + Math.abs(entry.amount), 0);
+    
+    // Start with cash available (money added - expenses)
+    let balance = moneyAdded - expenses;
 
-    // Add/subtract completed transactions
+    // Calculate transaction impacts
+    let totalBought = 0;
+    let totalSold = 0;
+    
     transactions.forEach(transaction => {
+      // Ignore cancelled and in-progress transactions
       if (transaction.status === 'completed') {
-        if (transaction.type === 'sell') {
-          balance += transaction.total; // Selling scrap adds money
-        } else if (transaction.type === 'buy') {
+        if (transaction.type === 'buy') {
+          totalBought += transaction.total;
           balance -= transaction.total; // Buying scrap costs money
+        } else if (transaction.type === 'sell') {
+          totalSold += transaction.total;
+          balance += transaction.total; // Selling scrap adds money
         }
       }
     });
-
-
 
     return balance;
   };
@@ -154,6 +156,18 @@ function AppContent() {
     } catch (error) {
       console.error('Error updating transaction:', error);
       // You could show a toast notification here
+    }
+  };
+
+  const handleStatusUpdate = async (transactionId: string, newStatus: TransactionStatus) => {
+    try {
+      const transaction = transactions.find(t => t.id === transactionId);
+      if (transaction) {
+        const updatedTransaction = { ...transaction, status: newStatus };
+        await updateTransaction(updatedTransaction);
+      }
+    } catch (error) {
+      console.error('Error updating transaction status:', error);
     }
   };
 
@@ -210,9 +224,9 @@ function AppContent() {
   // Employee role restrictions
   const getAvailableViews = () => {
     if (user.role === 'owner') {
-      return ['dashboard', 'buy-scrap', 'sell-scrap', 'employees', 'reports', 'cash', 'payment-processing', 'transaction-details'];
+      return ['dashboard', 'buy-scrap', 'sell-scrap', 'employees', 'reports', 'cash', 'payment-processing', 'transaction-details', 'all-transactions'];
     } else {
-      return ['dashboard', 'buy-scrap', 'sell-scrap', 'transaction-details'];
+      return ['dashboard', 'buy-scrap', 'sell-scrap', 'transaction-details', 'all-transactions'];
     }
   };
 
@@ -220,12 +234,7 @@ function AppContent() {
 
   // Filter transactions based on user role
   const getFilteredTransactions = () => {
-    if (user.role === 'owner') {
-      return transactions; // Owners see all transactions
-    } else {
-      // Employees see only their own transactions
-      return transactions.filter(t => t.employee === user.name);
-    }
+    return transactions; // All transactions are visible to all users
   };
 
   const filteredTransactions = getFilteredTransactions();
@@ -243,6 +252,7 @@ function AppContent() {
           <Dashboard 
             transactions={filteredTransactions}
             cashEntries={cashEntries}
+            currentBalance={currentBalance}
             onNavigate={setCurrentView}
             onTransactionClick={handleTransactionClick}
             userRole={user.role}
@@ -347,10 +357,6 @@ function AppContent() {
           />
         );
       case 'all-transactions':
-        if (!hasPermission('view_all_transactions')) {
-          setCurrentView('dashboard');
-          return null;
-        }
         return (
           <AllTransactions 
             transactions={transactions}
@@ -371,9 +377,7 @@ function AppContent() {
             transactions={transactions}
             onBack={() => setCurrentView('dashboard')}
             onTransactionClick={handleTransactionClick}
-            onTransactionUpdate={handleTransactionUpdate}
-            onAddCashEntry={handleAddCashEntry}
-            currentEmployee={user.name}
+            onUpdateStatus={handleStatusUpdate}
           />
         );
       default:
@@ -381,6 +385,7 @@ function AppContent() {
           <Dashboard 
             transactions={filteredTransactions}
             cashEntries={cashEntries}
+            currentBalance={currentBalance}
             onNavigate={setCurrentView}
             onTransactionClick={handleTransactionClick}
             userRole={user.role}

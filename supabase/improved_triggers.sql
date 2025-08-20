@@ -63,3 +63,4 @@ CREATE TRIGGER update_employee_stats_trigger
 CREATE TRIGGER update_employee_advances_trigger
     AFTER INSERT OR UPDATE OR DELETE ON public.cash_advances
     FOR EACH ROW EXECUTE FUNCTION update_employee_advances();
+

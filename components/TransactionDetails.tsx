@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Key, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -44,7 +44,7 @@ interface EditableItem {
   pieces?: number;
   price: number;
   total: number;
-  image?: string;
+  images?: string[];
 }
 
 export default function TransactionDetails({ 
@@ -173,7 +173,7 @@ export default function TransactionDetails({
         pieces: item.pieces,
         price: item.price,
         total: item.total,
-        image: item.image
+        images: item.images
       })),
       subtotal: calculateItemSubtotal(),
       total: calculateTransactionTotal(),
@@ -301,7 +301,7 @@ export default function TransactionDetails({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label>Status</Label>
-                {isEditing && userRole === 'owner' && transaction.status === 'for-payment' ? (
+                {isEditing && userRole === 'owner' ? (
                   <Select 
                     value={editedTransaction.status} 
                     onValueChange={(value: any) => setEditedTransaction({
@@ -313,6 +313,7 @@ export default function TransactionDetails({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="in-progress">In Progress</SelectItem>
                       <SelectItem value="for-payment">For Payment</SelectItem>
                       <SelectItem value="completed">Completed</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
@@ -598,16 +599,28 @@ export default function TransactionDetails({
                 Photos taken during this transaction session for documentation and verification purposes.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {transaction.sessionImages.map((imageUrl, index) => (
+                {transaction.sessionImages.map((imageUrl: string | URL | undefined, index: Key | null | undefined) => (
                   <div 
                     key={index} 
                     className="aspect-video border rounded-lg overflow-hidden bg-gray-50 cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all group"
-                    onClick={() => window.open(imageUrl, '_blank')}
+                    onClick={() => {
+                      const imageUrlString = typeof imageUrl === 'string' ? imageUrl : imageUrl?.toString();
+                      if (imageUrlString?.startsWith('data:')) {
+                        // For data URLs, create a blob and open it
+                        const link = document.createElement('a');
+                        link.href = imageUrlString;
+                        link.target = '_blank';
+                        link.click();
+                      } else {
+                        // For regular URLs, use window.open
+                        window.open(imageUrlString, '_blank');
+                      }
+                    }}
                   >
                     <div className="relative w-full h-full">
                       <img 
-                        src={imageUrl} 
-                        alt={`Transaction ${transaction.id} - Photo ${index + 1}`} 
+                        src={typeof imageUrl === 'string' ? imageUrl : imageUrl?.toString()} 
+                        alt={`Transaction ${transaction.id} - Photo ${typeof index === 'number' ? index + 1 : 'N/A'}`} 
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                         loading="lazy"
                       />
