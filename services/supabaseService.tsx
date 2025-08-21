@@ -21,6 +21,22 @@ export interface Transaction {
   createdByRole?: string;
   createdAt?: string;
   updatedAt?: string;
+  // Additional fields for buy/sell transactions
+  sessionType?: 'in-shop' | 'pickup' | 'delivery';
+  customerInfo?: string;
+  deliveryAddress?: string;
+  tripExpenses?: Array<{
+    id: string;
+    type: string;
+    amount: number;
+    description: string;
+  }>;
+  deliveryExpenses?: Array<{
+    id: string;
+    type: string;
+    amount: number;
+    description: string;
+  }>;
   // Common fields
   items: TransactionItem[];
   subtotal: number;
@@ -124,6 +140,7 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     completedAt,
     isDelivery,
     isPickup,
+    sessionType,
     sessionImages,
     createdBy,
     createdByName,
@@ -131,6 +148,11 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     createdAt,
     updatedAt,
     items,
+    // Additional fields to exclude from ...rest
+    customerInfo,
+    deliveryAddress,
+    tripExpenses,
+    deliveryExpenses,
     // Extract common fields explicitly (these should be kept)
     id,
     type,
@@ -152,6 +174,14 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     dbCustomerType = 'business';
   }
 
+  // Map sessionType to boolean fields
+  let dbIsDelivery = isDelivery;
+  let dbIsPickup = isPickup;
+  if (sessionType) {
+    dbIsDelivery = sessionType === 'delivery';
+    dbIsPickup = sessionType === 'pickup';
+  }
+
   return {
     // Core fields
     id,
@@ -167,8 +197,8 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     customer_name: customerName,
     customer_type: dbCustomerType,
     completed_at: completedAt,
-    is_delivery: isDelivery,
-    is_pickup: isPickup,
+    is_delivery: dbIsDelivery,
+    is_pickup: dbIsPickup,
     session_images: sessionImages,
     created_by: createdBy,
     created_by_name: createdByName,
@@ -203,6 +233,16 @@ function convertTransactionFromDb(dbTransaction: any): Transaction {
     frontendCustomerType = 'company';
   }
 
+  // Map boolean fields back to sessionType
+  let sessionType: 'in-shop' | 'pickup' | 'delivery' | undefined;
+  if (is_delivery) {
+    sessionType = 'delivery';
+  } else if (is_pickup) {
+    sessionType = 'pickup';
+  } else {
+    sessionType = 'in-shop'; // Default for buy transactions
+  }
+
   return {
     ...rest,
     customerName: customer_name,
@@ -210,6 +250,7 @@ function convertTransactionFromDb(dbTransaction: any): Transaction {
     completedAt: completed_at,
     isDelivery: is_delivery,
     isPickup: is_pickup,
+    sessionType: sessionType,
     sessionImages: session_images,
     createdBy: created_by,
     createdByName: created_by_name,
@@ -399,17 +440,39 @@ class SupabaseDataService {
   }
 
   // Transaction methods
-  async getAllTransactions(): Promise<Transaction[]> {
+  async getAllTransactions(options?: { 
+    limit?: number; 
+    offset?: number; 
+    status?: string[];
+    includeItems?: boolean;
+  }): Promise<Transaction[]> {
     try {
-      const { data, error } = await supabase
+      console.time('getAllTransactions');
+      
+      const { 
+        limit = 50, // Default limit to improve performance
+        offset = 0,
+        status,
+        includeItems = false // Only fetch items when needed
+      } = options || {};
+
+      let query = supabase
         .from('transactions')
-        .select(`
-          *,
-          transaction_items (*)
-        `)
-        .order('timestamp', { ascending: false });
+        .select(includeItems ? `*, transaction_items (*)` : '*')
+        .order('timestamp', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      // Add status filter if provided
+      if (status && status.length > 0) {
+        query = query.in('status', status);
+      }
+
+      const { data, error } = await query;
 
       if (error) throw error;
+
+      console.timeEnd('getAllTransactions');
+      console.log(`Fetched ${data?.length || 0} transactions`);
 
       // Transform data to match frontend interface
       return (data || []).map(transaction => convertTransactionFromDb(transaction));
@@ -419,8 +482,53 @@ class SupabaseDataService {
     }
   }
 
+  // Fast method for dashboard/list views - without items
+  async getTransactionsSummary(options?: {
+    limit?: number;
+    status?: string[];
+    type?: 'buy' | 'sell';
+  }): Promise<Transaction[]> {
+    try {
+      console.time('getTransactionsSummary');
+      
+      const { 
+        limit = 100,
+        status,
+        type
+      } = options || {};
+
+      let query = supabase
+        .from('transactions')
+        .select('id, type, customer_name, employee, status, total, timestamp, created_at')
+        .order('timestamp', { ascending: false })
+        .limit(limit);
+
+      if (status && status.length > 0) {
+        query = query.in('status', status);
+      }
+
+      if (type) {
+        query = query.eq('type', type);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      console.timeEnd('getTransactionsSummary');
+      console.log(`Fetched ${data?.length || 0} transaction summaries`);
+
+      return (data || []).map(transaction => convertTransactionFromDb(transaction));
+    } catch (error) {
+      console.error('Error fetching transaction summaries:', error);
+      return [];
+    }
+  }
+
   async getTransaction(id: string): Promise<Transaction | null> {
     try {
+      console.log('🔍 getTransaction called with ID:', id);
+      
       const { data, error } = await supabase
         .from('transactions')
         .select(`
@@ -430,11 +538,26 @@ class SupabaseDataService {
         .eq('id', id)
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ Database error in getTransaction:', error);
+        throw error;
+      }
 
-      return data ? convertTransactionFromDb(data) : null;
+      if (!data) {
+        console.log('⚠️ No transaction found with ID:', id);
+        return null;
+      }
+
+      console.log('✅ Transaction found:', {
+        id: data.id,
+        type: data.type,
+        status: data.status,
+        itemsCount: data.transaction_items?.length || 0
+      });
+
+      return convertTransactionFromDb(data);
     } catch (error) {
-      console.error('Error fetching transaction:', error);
+      console.error('❌ Error fetching transaction:', error);
       return null;
     }
   }
@@ -443,7 +566,14 @@ class SupabaseDataService {
     try {
       const { items, ...transactionData } = transaction;
       
-      // Convert frontend camelCase to database snake_case
+      console.log('saveTransaction called with:', {
+        transactionId: transaction.id,
+        transactionType: transaction.type,
+        itemsCount: items?.length || 0,
+        items: items
+      });
+      
+      // Convert frontend camelCase to database snake_case (without items)
       const dbTransaction = convertTransactionToDb(transactionData);
       
       console.log('Transaction data before save:', dbTransaction);
@@ -511,24 +641,47 @@ class SupabaseDataService {
       }
 
       // Save transaction items
+      console.log('Processing transaction items:', { 
+        itemsExists: !!items, 
+        itemsLength: items?.length || 0, 
+        items: items,
+        transactionItems: transaction.items // Check if items exist on original transaction
+      });
+      
       if (items && items.length > 0) {
+        console.log('Deleting existing items for transaction:', transaction.id);
+        
         // Delete existing items first
-        await supabase
+        const { error: deleteError } = await supabase
           .from('transaction_items')
           .delete()
           .eq('transaction_id', transaction.id);
+          
+        if (deleteError) {
+          console.error('Error deleting existing items:', deleteError);
+          throw deleteError;
+        }
 
         // Insert new items
         const itemsWithTransactionId = items.map(item => ({
           ...item,
           transaction_id: transaction.id
         }));
+        
+        console.log('Inserting transaction items:', itemsWithTransactionId);
 
         const { error: itemsError } = await supabase
           .from('transaction_items')
           .insert(itemsWithTransactionId);
 
-        if (itemsError) throw itemsError;
+        if (itemsError) {
+          console.error('Error inserting transaction items:', itemsError);
+          throw itemsError;
+        }
+        
+        console.log('Successfully saved', items.length, 'transaction items');
+      } else {
+        console.log('No items to save for transaction:', transaction.id);
       }
     } catch (error) {
       console.error('Error saving transaction:', error);

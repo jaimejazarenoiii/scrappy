@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Separator } from './ui/separator';
 import { Badge } from './ui/badge';
 import { Textarea } from './ui/textarea';
+import { ActionLoading } from './ui/loading';
 import { 
   ArrowLeft, 
   Plus, 
@@ -33,6 +34,7 @@ interface SellScrapProps {
   employees: Employee[];
   generateTransactionId: () => Promise<string>;
   onNavigateToTransaction?: (transactionId: string) => void;
+  onSaveDraft?: (transaction: Transaction) => void;
 }
 
 interface SellItem {
@@ -53,9 +55,12 @@ interface DeliveryExpense {
   description: string;
 }
 
-export default function SellScrap({ onBack, onComplete, employees, generateTransactionId, onNavigateToTransaction }: SellScrapProps) {
+export default function SellScrap({ onBack, onComplete, employees, generateTransactionId, onNavigateToTransaction, onSaveDraft }: SellScrapProps) {
   const [sessionType, setSessionType] = useState<'pickup' | 'delivery' | null>(null);
   const [customerType, setCustomerType] = useState<'person' | 'company' | 'government'>('person');
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+  const [pendingBackgroundSaves, setPendingBackgroundSaves] = useState(0);
   const [customerName, setCustomerName] = useState<string>('');
   const [items, setItems] = useState<SellItem[]>([]);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
@@ -73,6 +78,11 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
   const editFileInputRef = useRef<HTMLInputElement>(null);
   
   const [transactionId, setTransactionId] = useState<string>('');
+  const [draftCreated, setDraftCreated] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [showError, setShowError] = useState(false);
 
   // Generate transaction ID on component mount
   useEffect(() => {
@@ -82,6 +92,181 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     };
     generateId();
   }, []);
+
+  // Create draft transaction when session type is selected
+  const createDraftTransaction = async (selectedSessionType: 'pickup' | 'delivery') => {
+    if (!onSaveDraft || draftCreated) return;
+
+    // Ensure we have a transaction ID before creating draft
+    let currentTransactionId = transactionId;
+    if (!currentTransactionId) {
+      currentTransactionId = await generateTransactionId();
+      setTransactionId(currentTransactionId);
+    }
+
+    const draftTransaction: Transaction = {
+      id: currentTransactionId,
+      type: 'sell',
+      status: 'in-progress',
+      timestamp: new Date().toISOString(),
+      customerName: '',
+      customerType: customerType,
+      employee: 'System', // Use default employee for draft
+      total: 0,
+      subtotal: 0, // Add required subtotal field
+      items: [],
+      sessionType: selectedSessionType,
+      location: selectedSessionType === 'pickup' ? 'shop' : '',
+      customerInfo: '',
+      deliveryAddress: selectedSessionType === 'delivery' ? '' : undefined,
+      sessionImages: [],
+      deliveryExpenses: []
+    };
+
+    try {
+      await onSaveDraft(draftTransaction);
+      setDraftCreated(true);
+    } catch (error) {
+      console.error('Error creating draft transaction:', error);
+    }
+  };
+
+  // Auto-save current progress
+  const autoSaveProgress = async () => {
+    if (!onSaveDraft || !draftCreated || !sessionType) return;
+
+    // Ensure we have a transaction ID
+    let currentTransactionId = transactionId;
+    if (!currentTransactionId) {
+      console.error('No transaction ID available for auto-save');
+      return;
+    }
+
+    console.log('SellScrap auto-saving with items:', items.length, items);
+
+    const mappedItemsForAutoSave = items.map(item => ({
+      id: item.id,
+      name: `${item.name} (${item.category})`, // Match the format used in completeTransaction
+      weight: item.weight || 0,
+      pieces: item.pieces || 0,
+      price: item.pricePerUnit || 0,
+      total: item.total || 0,
+      images: item.images || []
+    }));
+
+    const currentTransaction: Transaction = {
+      id: currentTransactionId,
+      type: 'sell',
+      status: 'in-progress',
+      timestamp: new Date().toISOString(),
+      customerName: customerName,
+      customerType: customerType,
+      employee: selectedEmployees.length > 0 ? selectedEmployees.join(', ') : 'System',
+      total: calculateGrandTotal(),
+      subtotal: calculateSubtotal(),
+      items: mappedItemsForAutoSave,
+      sessionType: sessionType,
+      location: sessionType === 'pickup' ? 'shop' : deliveryAddress,
+      customerInfo: customerInfo,
+      deliveryAddress: sessionType === 'delivery' ? deliveryAddress : undefined,
+      sessionImages: [...capturedImages, ...sessionImages],
+      deliveryExpenses: deliveryExpenses.map(expense => ({
+        id: expense.id,
+        type: expense.type,
+        amount: expense.amount,
+        description: expense.description
+      }))
+    };
+
+    setIsAutoSaving(true);
+    
+    console.log('🔄 Auto-saving SellScrap transaction:', {
+      transactionId: currentTransactionId,
+      itemsCount: items.length,
+      totalAmount: calculateGrandTotal()
+    });
+
+    try {
+      await onSaveDraft(currentTransaction);
+      setLastSaveTime(new Date());
+      console.log('✅ Auto-save successful for SellScrap');
+    } catch (error) {
+      console.error('❌ Error auto-saving transaction:', error);
+    } finally {
+      setIsAutoSaving(false);
+    }
+  };
+
+  // Background auto-save every 15 seconds (more frequent for better UX)
+  useEffect(() => {
+    if (!draftCreated || !sessionType) return;
+
+    console.log('🔄 Starting background auto-save for SellScrap transaction:', transactionId);
+    const interval = setInterval(() => {
+      console.log('⏰ Background auto-save triggered for SellScrap');
+      autoSaveProgress();
+    }, 15000); // 15 seconds - more frequent than before
+
+    return () => {
+      console.log('🛑 Stopping background auto-save for SellScrap');
+      clearInterval(interval);
+    };
+  }, [draftCreated, sessionType, transactionId]); // Reduced dependencies to prevent too many re-renders
+
+  // Auto-save before page unload/navigation
+  useEffect(() => {
+    if (!draftCreated) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      // Attempt to save before leaving
+      autoSaveProgress();
+      // Don't show confirmation dialog for better UX
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && draftCreated) {
+        // Save when tab becomes hidden
+        autoSaveProgress();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [draftCreated]);
+
+  // Fire-and-forget save on back navigation (non-blocking)
+  const handleBack = () => {
+    // Fire the save request in the background without waiting
+    if (sessionType && draftCreated) {
+      console.log('🚀 Firing background save on back navigation (SellScrap)');
+      setPendingBackgroundSaves(prev => prev + 1);
+      
+      // Don't await - let it run in background
+      autoSaveProgress()
+        .then(() => {
+          console.log('✅ Background save completed on navigation');
+          setPendingBackgroundSaves(prev => Math.max(0, prev - 1));
+        })
+        .catch(error => {
+          console.error('❌ Background save failed on navigation:', error);
+          setPendingBackgroundSaves(prev => Math.max(0, prev - 1));
+        });
+    }
+    
+    // Navigate immediately without waiting for save
+    if (sessionType) {
+      // If we're in a session, go back to session selection
+      setSessionType(null);
+    } else {
+      // If we're in session selection, go back to dashboard
+      onBack();
+    }
+  };
   
   const [newItem, setNewItem] = useState({
     name: '',
@@ -217,7 +402,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     const total = quantity * pricePerUnit;
 
     const item: SellItem = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       name: newItem.name.trim(),
       [newItem.inputType]: quantity,
       pricePerUnit,
@@ -320,7 +505,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
   const addDeliveryExpense = () => {
     const expense: DeliveryExpense = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: 'Fuel',
       amount: 0,
       description: ''
@@ -338,32 +523,58 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     setDeliveryExpenses(prev => prev.filter(expense => expense.id !== id));
   };
 
-  const completeTransaction = () => {
-    const transaction: Transaction = {
-      id: transactionId,
-      type: 'sell',
-      customerType,
-      customerName: customerName.trim() || undefined,
-      items: items.map(item => ({
+  const completeTransaction = async () => {
+    try {
+      setIsLoading(true);
+      setLoadingMessage('Creating transaction...');
+
+      console.log('SellScrap completing transaction with items:', items.length, items);
+
+      const mappedItems = items.map(item => ({
+        id: item.id,
         name: `${item.name} (${item.category})`,
         weight: item.weight,
         pieces: item.pieces,
         price: item.pricePerUnit,
         total: item.total,
         images: item.images
-      })),
-      subtotal: calculateSubtotal(),
-      total: calculateGrandTotal(),
-      expenses: calculateDeliveryExpenses(),
-      employee: selectedEmployees.join(', '), // For backward compatibility
-      status: 'for-payment',
-      location: sessionType === 'delivery' ? deliveryAddress : undefined,
-      timestamp: new Date().toISOString(),
-      isDelivery: sessionType === 'delivery',
-      sessionImages: sessionImages.length > 0 ? sessionImages : undefined
-    };
+      }));
 
-    onComplete(transaction);
+      const transaction: Transaction = {
+        id: transactionId,
+        type: 'sell',
+        customerType,
+        customerName: customerName.trim() || undefined,
+        items: mappedItems,
+        subtotal: calculateSubtotal(),
+        total: calculateGrandTotal(),
+        expenses: calculateDeliveryExpenses(),
+        employee: selectedEmployees.join(', '), // For backward compatibility
+        status: 'for-payment',
+        location: sessionType === 'delivery' ? deliveryAddress : undefined,
+        timestamp: new Date().toISOString(),
+        isDelivery: sessionType === 'delivery',
+        sessionImages: sessionImages.length > 0 ? sessionImages : undefined
+      };
+
+      console.log('SellScrap final transaction object:', transaction);
+
+      await onComplete(transaction);
+      
+      setShowSuccess(true);
+      setTimeout(() => {
+        setShowSuccess(false);
+        if (onNavigateToTransaction) {
+          onNavigateToTransaction(transaction.id);
+        }
+      }, 2000);
+    } catch (error) {
+      console.error('Error completing transaction:', error);
+      setShowError(true);
+      setTimeout(() => setShowError(false), 3000);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (!sessionType) {
@@ -379,7 +590,10 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
         <div className="space-y-4">
           <Card 
             className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-green-300"
-            onClick={() => setSessionType('pickup')}
+            onClick={() => {
+              setSessionType('pickup');
+              createDraftTransaction('pickup');
+            }}
           >
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
@@ -396,7 +610,10 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
           <Card 
             className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-blue-300"
-            onClick={() => setSessionType('delivery')}
+            onClick={() => {
+              setSessionType('delivery');
+              createDraftTransaction('delivery');
+            }}
           >
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
@@ -443,7 +660,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Button variant="ghost" size="icon" onClick={() => setSessionType(null)}>
+          <Button variant="ghost" size="icon" onClick={handleBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
@@ -455,6 +672,30 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
             </Badge>
           </div>
         </div>
+        
+        {/* Auto-save Status Indicator */}
+        {draftCreated && (
+          <div className="flex items-center space-x-2 text-xs mr-4">
+            {isAutoSaving || pendingBackgroundSaves > 0 ? (
+              <div className="flex items-center space-x-1 text-blue-600">
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
+                <span>
+                  {isAutoSaving ? 'Saving...' : `${pendingBackgroundSaves} pending save${pendingBackgroundSaves > 1 ? 's' : ''}...`}
+                </span>
+              </div>
+            ) : lastSaveTime ? (
+              <div className="flex items-center space-x-1 text-green-600">
+                <div className="w-2 h-2 bg-green-600 rounded-full"></div>
+                <span>Saved {lastSaveTime.toLocaleTimeString()}</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-1 text-gray-400">
+                <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                <span>Draft mode</span>
+              </div>
+            )}
+          </div>
+        )}
         
         {/* Transaction ID Display */}
         <div className="text-right">
@@ -1008,11 +1249,24 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
               size="lg"
             >
               <Receipt className="h-5 w-5 mr-2" />
-              Complete Sale & Print Receipt
+              Complete Sale
             </Button>
           </CardContent>
         </Card>
       )}
+
+      <ActionLoading
+        isLoading={isLoading}
+        success={showSuccess}
+        error={showError}
+        message={loadingMessage}
+        successMessage="Transaction created successfully!"
+        errorMessage="Failed to create transaction"
+        onClose={() => {
+          setShowSuccess(false);
+          setShowError(false);
+        }}
+      />
     </div>
   );
 }

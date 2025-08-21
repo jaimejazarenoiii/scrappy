@@ -32,6 +32,7 @@ function AppContent() {
   const { user, loading: authLoading, hasPermission } = useAuth();
   const [currentView, setCurrentView] = useState('dashboard');
   const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [selectedTransactionDetails, setSelectedTransactionDetails] = useState<Transaction | null>(null);
   
   // Use real-time data hook
   const {
@@ -50,6 +51,7 @@ function AppContent() {
     updateEmployeeStats,
     updateCashAdvanceStatus,
     generateTransactionId,
+    loadTransactionDetails,
     refreshData
   } = useRealtimeData();
 
@@ -103,12 +105,60 @@ function AppContent() {
     );
   }
 
-  const handleTransactionClick = (transactionId: string) => {
+  const handleTransactionClick = async (transactionId: string) => {
     setSelectedTransactionId(transactionId);
     setCurrentView('transaction-details');
+    
+    // Load full transaction details with items
+    try {
+      console.log('🔍 Loading transaction details for:', transactionId);
+      const fullTransaction = await loadTransactionDetails(transactionId);
+      
+      if (fullTransaction) {
+        setSelectedTransactionDetails(fullTransaction);
+        console.log('✅ Transaction details loaded successfully');
+      } else {
+        throw new Error('Transaction not found');
+      }
+    } catch (error) {
+      console.error('❌ Error loading transaction details:', error);
+      
+      // Fallback strategy: try to find in current transactions list
+      console.log('🔄 Trying fallback: searching in current transactions list');
+      const summaryTransaction = transactions.find(t => t.id === transactionId);
+      
+      if (summaryTransaction) {
+        console.log('✅ Found transaction in summary list, using as fallback');
+        setSelectedTransactionDetails(summaryTransaction);
+      } else {
+        console.error('❌ Transaction not found in summary list either');
+        // Force refresh data and try again
+        console.log('🔄 Refreshing data and retrying...');
+        await refreshData();
+        
+        // Try one more time after refresh
+        setTimeout(async () => {
+          try {
+            const refreshedTransaction = await loadTransactionDetails(transactionId);
+            if (refreshedTransaction) {
+              setSelectedTransactionDetails(refreshedTransaction);
+              console.log('✅ Transaction found after refresh');
+            } else {
+              // Last resort: use summary data after refresh
+              const refreshedSummary = transactions.find(t => t.id === transactionId);
+              setSelectedTransactionDetails(refreshedSummary || null);
+              console.log('⚠️ Using summary data as last resort');
+            }
+          } catch (retryError) {
+            console.error('❌ Retry failed:', retryError);
+            setSelectedTransactionDetails(null);
+          }
+        }, 1000);
+      }
+    }
   };
 
-  const selectedTransaction = transactions.find(t => t.id === selectedTransactionId);
+
 
   // Calculate current balance: Total money added - Total spent + Sales revenue
   const calculateCurrentBalance = () => {
@@ -266,10 +316,8 @@ function AppContent() {
             employees={employees}
             currentBalance={currentBalance}
             generateTransactionId={generateTransactionId}
-            onNavigateToTransaction={(transactionId) => {
-              setSelectedTransactionId(transactionId);
-              setCurrentView('transaction-details');
-            }}
+            onNavigateToTransaction={handleTransactionClick}
+            onSaveDraft={handleTransactionUpdate}
           />
         );
       case 'sell-scrap':
@@ -279,10 +327,8 @@ function AppContent() {
             onComplete={handleAddTransaction}
             employees={employees}
             generateTransactionId={generateTransactionId}
-            onNavigateToTransaction={(transactionId) => {
-              setSelectedTransactionId(transactionId);
-              setCurrentView('transaction-details');
-            }}
+            onNavigateToTransaction={handleTransactionClick}
+            onSaveDraft={handleTransactionUpdate}
           />
         );
       case 'employees':
@@ -328,19 +374,34 @@ function AppContent() {
           />
         );
       case 'transaction-details':
-        if (selectedTransaction) {
+        if (selectedTransactionDetails) {
           // Owners can edit any transaction
           // Employees can only view transactions
           const canEdit = user.role === 'owner';
           
           return (
             <TransactionDetails
-              transaction={selectedTransaction}
-              onBack={() => setCurrentView('dashboard')}
+              transaction={selectedTransactionDetails}
+              onBack={() => {
+                setCurrentView('dashboard');
+                setSelectedTransactionDetails(null);
+                setSelectedTransactionId(null);
+              }}
               onUpdate={handleTransactionUpdate}
               readOnly={!canEdit}
               userRole={user.role}
             />
+          );
+        }
+        // Show loading while transaction details are being loaded
+        if (selectedTransactionId) {
+          return (
+            <div className="min-h-screen flex items-center justify-center">
+              <div className="text-center">
+                <RefreshCw className="h-8 w-8 animate-spin mx-auto mb-4" />
+                <p>Loading transaction details...</p>
+              </div>
+            </div>
           );
         }
         return null;

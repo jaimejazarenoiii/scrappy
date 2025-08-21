@@ -27,7 +27,7 @@ import {
   CreditCard,
   XCircle
 } from 'lucide-react';
-import { Transaction, Employee } from '../App';
+import { Transaction, Employee } from '../services/supabaseService';
 
 interface TransactionDetailsProps {
   transaction: Transaction;
@@ -54,13 +54,35 @@ export default function TransactionDetails({
   readOnly = false,
   userRole = 'owner'
 }: TransactionDetailsProps) {
+  console.log('TransactionDetails received transaction:', {
+    id: transaction.id,
+    type: transaction.type,
+    subtotal: transaction.subtotal,
+    total: transaction.total,
+    expenses: transaction.expenses,
+    itemsCount: transaction.items?.length || 0,
+    items: transaction.items
+  });
+
   const [isEditing, setIsEditing] = useState(false);
   const [editedTransaction, setEditedTransaction] = useState<Transaction>({ ...transaction });
   const [editedItems, setEditedItems] = useState<EditableItem[]>(
-    transaction.items.map((item, index) => ({
-      id: `item-${index}`,
-      ...item
-    }))
+    transaction.items.map((item, index) => {
+      console.log('Processing transaction item:', item);
+      
+      // Ensure item has a proper total calculated
+      const quantity = item.weight || item.pieces || 0;
+      const calculatedTotal = (item.price || 0) * quantity;
+      const finalTotal = item.total || calculatedTotal;
+      
+      console.log(`Item ${item.name}: price=${item.price}, quantity=${quantity}, stored_total=${item.total}, calculated_total=${calculatedTotal}, final_total=${finalTotal}`);
+      
+      return {
+        id: `item-${index}`,
+        ...item,
+        total: finalTotal // Ensure total is properly calculated
+      };
+    })
   );
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -108,11 +130,63 @@ export default function TransactionDetails({
     return transaction.status !== 'cancelled' && transaction.status !== 'completed';
   };
 
-  const calculateItemSubtotal = () => 
-    editedItems.reduce((sum, item) => sum + item.total, 0);
+  const calculateItemSubtotal = () => {
+    const subtotal = editedItems.reduce((sum, item) => {
+      // Calculate total from price and quantity if total is missing/zero
+      let itemTotal = item.total || 0;
+      
+      if (!itemTotal && item.price) {
+        const quantity = item.weight || item.pieces || 0;
+        itemTotal = item.price * quantity;
+        console.log(`Calculating missing total for item ${item.name}: ${item.price} * ${quantity} = ${itemTotal}`);
+      }
+      
+      console.log(`Item: ${item.name}, stored total: ${item.total}, calculated total: ${itemTotal}, price: ${item.price}, weight: ${item.weight}, pieces: ${item.pieces}`);
+      return sum + itemTotal;
+    }, 0);
+    console.log('Final calculated subtotal:', subtotal, 'from items:', editedItems);
+    return subtotal;
+  };
 
-  const calculateTransactionTotal = () => 
-    calculateItemSubtotal() + (editedTransaction.expenses || 0);
+  const calculateTransactionTotal = () => {
+    const itemSubtotal = calculateItemSubtotal();
+    const expenses = editedTransaction.expenses || 0;
+    
+    // For sell transactions, expenses are deducted
+    const total = transaction.type === 'sell' 
+      ? itemSubtotal - expenses 
+      : itemSubtotal + expenses;
+      
+    console.log('Calculated transaction total:', total, '= itemSubtotal:', itemSubtotal, (transaction.type === 'sell' ? '-' : '+'), 'expenses:', expenses);
+    return total;
+  };
+
+  // Use calculated totals if stored totals are zero or invalid
+  const getDisplaySubtotal = () => {
+    const storedSubtotal = transaction.subtotal || 0;
+    const calculatedSubtotal = calculateItemSubtotal();
+    
+    // If stored subtotal is zero but we have items with prices, use calculated
+    if (!storedSubtotal && calculatedSubtotal > 0) {
+      console.log('Using calculated subtotal instead of stored zero subtotal');
+      return calculatedSubtotal;
+    }
+    
+    return storedSubtotal;
+  };
+
+  const getDisplayTotal = () => {
+    const storedTotal = transaction.total || 0;
+    const calculatedTotal = calculateTransactionTotal();
+    
+    // If stored total is zero but we have items with prices, use calculated
+    if (!storedTotal && calculatedTotal > 0) {
+      console.log('Using calculated total instead of stored zero total');
+      return calculatedTotal;
+    }
+    
+    return storedTotal;
+  };
 
   const updateItem = (itemId: string, field: keyof EditableItem, value: string | number) => {
     setEditedItems(prev => prev.map(item => {
@@ -133,7 +207,7 @@ export default function TransactionDetails({
 
   const addNewItem = () => {
     const newItem: EditableItem = {
-      id: `item-${Date.now()}`,
+      id: crypto.randomUUID(),
       name: '',
       weight: transaction.type === 'buy' ? 1 : undefined,
       pieces: transaction.type === 'sell' ? 1 : undefined,
@@ -177,7 +251,7 @@ export default function TransactionDetails({
       })),
       subtotal: calculateItemSubtotal(),
       total: calculateTransactionTotal(),
-      timestamp: new Date(editedTransaction.timestamp) // Ensure it's a Date object
+      timestamp: editedTransaction.timestamp // Keep as string for supabase interface
     };
 
     onUpdate(updatedTransaction);
@@ -287,7 +361,7 @@ export default function TransactionDetails({
               <div>
                 <Label>Date & Time</Label>
                 <p className="text-sm text-gray-600 mt-1">
-                  {formatDateTime(transaction.timestamp)}
+                  {formatDateTime(new Date(transaction.timestamp))}
                 </p>
               </div>
               <div>
@@ -401,7 +475,7 @@ export default function TransactionDetails({
             <div className="space-y-3">
               <div className="flex justify-between">
                 <span>Subtotal</span>
-                <span>{formatCurrency(isEditing ? calculateItemSubtotal() : transaction.subtotal)}</span>
+                <span>{formatCurrency(isEditing ? calculateItemSubtotal() : getDisplaySubtotal())}</span>
               </div>
               
               {(transaction.expenses || isEditing) && (
@@ -432,7 +506,7 @@ export default function TransactionDetails({
                 <span>Total</span>
                 <span className={transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'}>
                   {transaction.type === 'buy' ? '-' : '+'}
-                  {formatCurrency(isEditing ? calculateTransactionTotal() : transaction.total)}
+                  {formatCurrency(isEditing ? calculateTransactionTotal() : getDisplayTotal())}
                 </span>
               </div>
 

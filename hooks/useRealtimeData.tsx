@@ -20,9 +20,9 @@ export function useRealtimeData() {
       // Initialize Supabase service
       await supabaseDataService.initialize();
       
-      // Load all data in parallel
+      // Load all data in parallel - use fast summary for transactions
       const [transactionsData, employeesData, cashEntriesData] = await Promise.all([
-        supabaseDataService.getAllTransactions(),
+        supabaseDataService.getTransactionsSummary({ limit: 200 }), // Use fast summary method
         supabaseDataService.getAllEmployees(),
         supabaseDataService.getAllCashEntries()
       ]);
@@ -87,7 +87,7 @@ export function useRealtimeData() {
     try {
       await supabaseDataService.saveTransaction(transaction);
       // Manually refresh transactions to ensure UI updates
-      const updatedTransactions = await supabaseDataService.getAllTransactions();
+      const updatedTransactions = await supabaseDataService.getTransactionsSummary({ limit: 200 });
       setTransactions(updatedTransactions);
     } catch (error) {
       console.error('Error adding transaction:', error);
@@ -99,7 +99,7 @@ export function useRealtimeData() {
     try {
       await supabaseDataService.saveTransaction(transaction);
       // Manually refresh transactions to ensure UI updates
-      const updatedTransactions = await supabaseDataService.getAllTransactions();
+      const updatedTransactions = await supabaseDataService.getTransactionsSummary({ limit: 200 });
       setTransactions(updatedTransactions);
     } catch (error) {
       console.error('Error updating transaction:', error);
@@ -207,6 +207,32 @@ export function useRealtimeData() {
     }
   };
 
+  // Load full transaction with items (for detail views)
+  const loadTransactionDetails = async (transactionId: string): Promise<Transaction | null> => {
+    try {
+      return await supabaseDataService.getTransaction(transactionId);
+    } catch (error) {
+      console.error('Error loading transaction details:', error);
+      return null;
+    }
+  };
+
+  // Load all transactions with items when specifically needed
+  const loadAllTransactionsWithItems = async (options?: { 
+    limit?: number; 
+    status?: string[]; 
+  }): Promise<Transaction[]> => {
+    try {
+      return await supabaseDataService.getAllTransactions({ 
+        includeItems: true, 
+        ...options 
+      });
+    } catch (error) {
+      console.error('Error loading transactions with items:', error);
+      return [];
+    }
+  };
+
   return {
     // Data
     transactions,
@@ -228,6 +254,8 @@ export function useRealtimeData() {
     updateEmployeeStats,
     updateCashAdvanceStatus,
     generateTransactionId,
+    loadTransactionDetails,
+    loadAllTransactionsWithItems,
     refreshData: loadData
   };
 }

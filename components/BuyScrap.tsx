@@ -34,6 +34,7 @@ interface BuyScrapProps {
   currentBalance: number;
   generateTransactionId: () => Promise<string>;
   onNavigateToTransaction?: (transactionId: string) => void;
+  onSaveDraft?: (transaction: Transaction) => void;
 }
 
 interface ScrapItem {
@@ -53,9 +54,12 @@ interface TripExpense {
   description: string;
 }
 
-export default function BuyScrap({ onBack, onComplete, employees, currentBalance, generateTransactionId, onNavigateToTransaction }: BuyScrapProps) {
+export default function BuyScrap({ onBack, onComplete, employees, currentBalance, generateTransactionId, onNavigateToTransaction, onSaveDraft }: BuyScrapProps) {
   const [sessionType, setSessionType] = useState<'in-shop' | 'pickup' | null>(null);
   const [customerType, setCustomerType] = useState<'person' | 'company' | 'government'>('person');
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+  const [pendingBackgroundSaves, setPendingBackgroundSaves] = useState(0);
   const [customerName, setCustomerName] = useState<string>('');
   const [items, setItems] = useState<ScrapItem[]>([]);
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
@@ -72,6 +76,7 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
   const editFileInputRef = useRef<HTMLInputElement>(null);
   
   const [transactionId, setTransactionId] = useState<string>('');
+  const [draftCreated, setDraftCreated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
@@ -85,6 +90,173 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
     };
     generateId();
   }, []);
+
+  // Create draft transaction when session type is selected
+  const createDraftTransaction = async (selectedSessionType: 'in-shop' | 'pickup') => {
+    if (!onSaveDraft || draftCreated) return;
+
+    // Ensure we have a transaction ID before creating draft
+    let currentTransactionId = transactionId;
+    if (!currentTransactionId) {
+      currentTransactionId = await generateTransactionId();
+      setTransactionId(currentTransactionId);
+    }
+
+    const draftTransaction: Transaction = {
+      id: currentTransactionId,
+      type: 'buy',
+      status: 'in-progress',
+      timestamp: new Date().toISOString(),
+      customerName: '',
+      customerType: customerType,
+      employee: 'System', // Use default employee for draft
+      total: 0,
+      subtotal: 0, // Add required subtotal field
+      items: [],
+      sessionType: selectedSessionType,
+      location: selectedSessionType === 'pickup' ? '' : 'shop',
+      sessionImages: [],
+      tripExpenses: []
+    };
+
+    try {
+      await onSaveDraft(draftTransaction);
+      setDraftCreated(true);
+    } catch (error) {
+      console.error('Error creating draft transaction:', error);
+    }
+  };
+
+  // Auto-save current progress
+  const autoSaveProgress = async () => {
+    if (!onSaveDraft || !draftCreated || !sessionType) return;
+
+    // Ensure we have a transaction ID
+    let currentTransactionId = transactionId;
+    if (!currentTransactionId) {
+      console.error('No transaction ID available for auto-save');
+      return;
+    }
+
+    const currentTransaction: Transaction = {
+      id: currentTransactionId,
+      type: 'buy',
+      status: 'in-progress',
+      timestamp: new Date().toISOString(),
+      customerName: customerName,
+      customerType: customerType,
+      employee: selectedEmployees.length > 0 ? selectedEmployees.join(', ') : 'System',
+      total: calculateGrandTotal(),
+      subtotal: calculateSubtotal(),
+      items: items.map(item => ({
+        id: item.id,
+        name: item.name,
+        weight: item.weight || 0,
+        pieces: item.pieces || 0,
+        price: item.pricePerUnit || 0,
+        total: item.total || 0,
+        images: item.images || []
+      })),
+      sessionType: sessionType,
+      location: sessionType === 'pickup' ? location : 'shop',
+      sessionImages: [...capturedImages, ...sessionImages],
+      tripExpenses: tripExpenses.map(expense => ({
+        id: expense.id,
+        type: expense.type,
+        amount: expense.amount,
+        description: expense.description
+      }))
+    };
+
+    setIsAutoSaving(true);
+    
+    console.log('🔄 Auto-saving BuyScrap transaction:', {
+      transactionId: currentTransactionId,
+      itemsCount: items.length,
+      totalAmount: calculateGrandTotal()
+    });
+
+    try {
+      await onSaveDraft(currentTransaction);
+      setLastSaveTime(new Date());
+      console.log('✅ Auto-save successful for BuyScrap');
+    } catch (error) {
+      console.error('❌ Error auto-saving transaction:', error);
+    } finally {
+      setIsAutoSaving(false);
+    }
+  };
+
+  // Background auto-save every 15 seconds (more frequent for better UX)
+  useEffect(() => {
+    if (!draftCreated || !sessionType) return;
+
+    console.log('🔄 Starting background auto-save for BuyScrap transaction:', transactionId);
+    const interval = setInterval(() => {
+      console.log('⏰ Background auto-save triggered for BuyScrap');
+      autoSaveProgress();
+    }, 15000); // 15 seconds - more frequent than before
+
+    return () => {
+      console.log('🛑 Stopping background auto-save for BuyScrap');
+      clearInterval(interval);
+    };
+  }, [draftCreated, sessionType, transactionId]); // Reduced dependencies to prevent too many re-renders
+
+  // Auto-save before page unload/navigation
+  useEffect(() => {
+    if (!draftCreated) return;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      // Attempt to save before leaving
+      autoSaveProgress();
+      // Don't show confirmation dialog for better UX
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && draftCreated) {
+        // Save when tab becomes hidden
+        autoSaveProgress();
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [draftCreated]);
+
+  // Fire-and-forget save on back navigation (non-blocking)
+  const handleBack = () => {
+    // Fire the save request in the background without waiting
+    if (sessionType && draftCreated) {
+      console.log('🚀 Firing background save on back navigation (BuyScrap)');
+      setPendingBackgroundSaves(prev => prev + 1);
+      
+      // Don't await - let it run in background
+      autoSaveProgress()
+        .then(() => {
+          console.log('✅ Background save completed on navigation');
+          setPendingBackgroundSaves(prev => Math.max(0, prev - 1));
+        })
+        .catch(error => {
+          console.error('❌ Background save failed on navigation:', error);
+          setPendingBackgroundSaves(prev => Math.max(0, prev - 1));
+        });
+    }
+    
+    // Navigate immediately without waiting for save
+    if (sessionType) {
+      // If we're in a session, go back to session selection
+      setSessionType(null);
+    } else {
+      // If we're in session selection, go back to dashboard
+      onBack();
+    }
+  };
 
   const [newItem, setNewItem] = useState({
     name: '',
@@ -219,7 +391,7 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
     const total = quantity * pricePerUnit;
 
     const item: ScrapItem = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       name: newItem.name.trim(),
       [newItem.inputType]: quantity,
       pricePerUnit,
@@ -318,7 +490,7 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
 
   const addTripExpense = () => {
     const expense: TripExpense = {
-      id: Date.now().toString(),
+      id: crypto.randomUUID(),
       type: 'Fuel',
       amount: 0,
       description: ''
@@ -340,6 +512,8 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
     try {
       setIsLoading(true);
       setLoadingMessage('Creating transaction...');
+
+      console.log('BuyScrap completing transaction with items:', items.length, items);
 
       const transaction: Transaction = {
         id: transactionId,
@@ -398,7 +572,10 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
         <div className="space-y-4">
           <Card 
             className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-blue-300"
-            onClick={() => setSessionType('in-shop')}
+            onClick={() => {
+              setSessionType('in-shop');
+              createDraftTransaction('in-shop');
+            }}
           >
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
@@ -415,7 +592,10 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
 
           <Card 
             className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-green-300"
-            onClick={() => setSessionType('pickup')}
+            onClick={() => {
+              setSessionType('pickup');
+              createDraftTransaction('pickup');
+            }}
           >
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
@@ -462,7 +642,7 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-4">
-          <Button variant="ghost" size="icon" onClick={() => setSessionType(null)}>
+          <Button variant="ghost" size="icon" onClick={handleBack}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
@@ -474,6 +654,30 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
             </Badge>
           </div>
         </div>
+        
+        {/* Auto-save Status Indicator */}
+        {draftCreated && (
+          <div className="flex items-center space-x-2 text-xs">
+            {isAutoSaving || pendingBackgroundSaves > 0 ? (
+              <div className="flex items-center space-x-1 text-blue-600">
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
+                <span>
+                  {isAutoSaving ? 'Saving...' : `${pendingBackgroundSaves} pending save${pendingBackgroundSaves > 1 ? 's' : ''}...`}
+                </span>
+              </div>
+            ) : lastSaveTime ? (
+              <div className="flex items-center space-x-1 text-green-600">
+                <div className="w-2 h-2 bg-green-600 rounded-full"></div>
+                <span>Saved {lastSaveTime.toLocaleTimeString()}</span>
+              </div>
+            ) : (
+              <div className="flex items-center space-x-1 text-gray-400">
+                <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+                <span>Draft mode</span>
+              </div>
+            )}
+          </div>
+        )}
         
         {/* Transaction ID Display */}
         <div className="text-right">
