@@ -1,4 +1,4 @@
-import { Key, useState } from 'react';
+import { Key, useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -8,6 +8,13 @@ import { Separator } from './ui/separator';
 import { Badge } from './ui/badge';
 import { Textarea } from './ui/textarea';
 import { Alert, AlertDescription } from './ui/alert';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuTrigger,
+  DropdownMenuSeparator 
+} from './ui/dropdown-menu';
 import { 
   ArrowLeft, 
   Edit, 
@@ -25,7 +32,11 @@ import {
   Receipt,
   CheckCircle,
   CreditCard,
-  XCircle
+  XCircle,
+  Printer,
+  ChevronDown,
+  Download,
+  Loader2
 } from 'lucide-react';
 import { Transaction, Employee } from '../services/supabaseService';
 
@@ -33,6 +44,7 @@ interface TransactionDetailsProps {
   transaction: Transaction;
   onBack: () => void;
   onUpdate: (updatedTransaction: Transaction) => void;
+  onUpdateStatus?: (updatedTransaction: Transaction) => void; // Optimized for status-only updates
   readOnly?: boolean;
   userRole?: 'owner' | 'employee';
 }
@@ -51,6 +63,7 @@ export default function TransactionDetails({
   transaction, 
   onBack, 
   onUpdate,
+  onUpdateStatus,
   readOnly = false,
   userRole = 'owner'
 }: TransactionDetailsProps) {
@@ -78,13 +91,37 @@ export default function TransactionDetails({
       console.log(`Item ${item.name}: price=${item.price}, quantity=${quantity}, stored_total=${item.total}, calculated_total=${calculatedTotal}, final_total=${finalTotal}`);
       
       return {
-        id: `item-${index}`,
+      id: `item-${index}`,
         ...item,
         total: finalTotal // Ensure total is properly calculated
       };
     })
   );
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [isMarkingPaid, setIsMarkingPaid] = useState(false);
+  const [isSavingChanges, setIsSavingChanges] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState(transaction.status);
+
+  // Sync currentStatus when transaction prop changes
+  useEffect(() => {
+    setCurrentStatus(transaction.status);
+  }, [transaction.status]);
+
+  // Update transaction totals when items change during editing
+  useEffect(() => {
+    if (isEditing) {
+      const newSubtotal = calculateItemSubtotal();
+      const newTotal = calculateTransactionTotal();
+      
+      setEditedTransaction(prev => ({
+        ...prev,
+        subtotal: newSubtotal,
+        total: newTotal
+      }));
+      
+      console.log('🔄 Updated transaction totals during editing - subtotal:', newSubtotal, 'total:', newTotal);
+    }
+  }, [editedItems, isEditing]);
 
   const formatCurrency = (amount: number) => 
     new Intl.NumberFormat('en-PH', { 
@@ -103,8 +140,9 @@ export default function TransactionDetails({
       minute: '2-digit'
     });
 
-  const getStatusBadge = (status: import('../App').TransactionStatus) => {
-    switch (status) {
+  const getStatusBadge = (status?: import('../App').TransactionStatus) => {
+    const statusToUse = status || currentStatus;
+    switch (statusToUse) {
       case 'in-progress':
         return <Badge className="bg-yellow-100 text-yellow-800">In Progress</Badge>;
       case 'for-payment':
@@ -119,15 +157,358 @@ export default function TransactionDetails({
   };
 
   const canPrintReceipt = () => {
-    return transaction.status === 'completed';
+    const canPrint = currentStatus === 'completed';
+    console.log('🖨️ canPrintReceipt check: currentStatus =', currentStatus, ', canPrint =', canPrint);
+    return canPrint;
   };
 
   const canProcessPayment = () => {
-    return transaction.status === 'for-payment';
+    return currentStatus === 'for-payment';
   };
 
   const canCancel = () => {
-    return transaction.status !== 'cancelled' && transaction.status !== 'completed';
+    return currentStatus !== 'cancelled' && currentStatus !== 'completed';
+  };
+
+
+
+  const handleMarkAsPaid = async () => {
+    try {
+      setIsMarkingPaid(true);
+      const updatedTransaction = {
+        ...transaction,
+        status: 'completed' as const,
+        completedAt: new Date().toISOString()
+      };
+      
+      // Update local status immediately for UI responsiveness
+      console.log('🔄 Updating status from', currentStatus, 'to completed');
+      setCurrentStatus('completed');
+      
+      // Use optimized status update if available, otherwise fall back to full update
+      if (onUpdateStatus) {
+        console.log('🚀 Using optimized status update method');
+        await onUpdateStatus(updatedTransaction);
+      } else {
+        console.log('⚠️ Using full transaction update method (slower)');
+        await onUpdate(updatedTransaction);
+      }
+    } catch (error) {
+      console.error('Error marking transaction as paid:', error);
+      // Revert status if update failed
+      setCurrentStatus(transaction.status);
+    } finally {
+      setIsMarkingPaid(false);
+    }
+  };
+
+  const printThermalReceipt = () => {
+    // Create a new window for printing
+    const printWindow = window.open('', '_blank', 'width=400,height=600');
+    
+    if (!printWindow) {
+      alert('Please allow popups to print receipts');
+      return;
+    }
+
+    // Generate thermal receipt HTML
+    const receiptHtml = generateThermalReceiptHtml();
+    
+    // Write the receipt HTML to the new window
+    printWindow.document.write(receiptHtml);
+    printWindow.document.close();
+    
+    // Trigger print dialog
+    printWindow.onload = () => {
+      printWindow.focus();
+      printWindow.print();
+      
+      // Close the window after printing (optional)
+      printWindow.onafterprint = () => {
+        printWindow.close();
+      };
+    };
+  };
+
+  const generateESCPOSCommands = () => {
+    const subtotal = getDisplaySubtotal();
+    
+    const receiptDate = new Date(transaction.timestamp).toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: '2-digit', 
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    // ESC/POS commands for thermal printers
+    let escpos = '';
+    
+    // Initialize printer
+    escpos += '\x1B\x40'; // ESC @ - Initialize printer
+    
+    // Set character size and alignment
+    escpos += '\x1B\x21\x08'; // ESC ! - Set character size (double height)
+    escpos += '\x1B\x61\x01'; // ESC a - Center alignment
+    
+    // Print header
+    escpos += 'JUNKSHOP MANAGEMENT\n';
+    escpos += '\x1B\x21\x00'; // Normal character size
+    escpos += 'Scrap Metal & Materials\n';
+    escpos += 'Receipt\n';
+    escpos += '================================\n';
+    
+    // Left alignment for details
+    escpos += '\x1B\x61\x00'; // ESC a - Left alignment
+    
+    // Transaction info
+    escpos += `Receipt #: ${transaction.id.slice(-8).toUpperCase()}\n`;
+    escpos += `Date: ${receiptDate}\n`;
+    escpos += `Type: ${transaction.type === 'buy' ? 'PURCHASE' : 'SALE'}\n`;
+    escpos += `Employee: ${transaction.employee}\n`;
+    
+    if (transaction.customerName) {
+      escpos += `Customer: ${transaction.customerName}\n`;
+    }
+    
+    if (transaction.location) {
+      escpos += `Location: ${transaction.location}\n`;
+    }
+    
+    escpos += '--------------------------------\n';
+    escpos += 'ITEMS:\n';
+    escpos += '--------------------------------\n';
+    
+    // Items
+    transaction.items.forEach(item => {
+      const quantity = item.weight ? `${item.weight} kg` : `${item.pieces} pcs`;
+      const itemTotal = item.total || ((item.weight || item.pieces || 0) * item.price);
+      
+      escpos += `${item.name}\n`;
+      escpos += `  ${quantity} x ${formatCurrency(item.price)}\n`;
+      escpos += `${' '.repeat(32 - formatCurrency(itemTotal).length)}${formatCurrency(itemTotal)}\n`;
+    });
+    
+    escpos += '================================\n';
+    
+    // Customer totals (internal expenses not shown)
+    escpos += `Subtotal:${' '.repeat(32 - 9 - formatCurrency(subtotal).length)}${formatCurrency(subtotal)}\n`;
+    escpos += '================================\n';
+    
+    // Grand total (use subtotal as customer total, no internal expenses)
+    escpos += '\x1B\x21\x08'; // Double height
+    const totalLabel = `TOTAL ${transaction.type === 'buy' ? 'PAID:' : 'RECEIVED:'}`;
+    escpos += `${totalLabel}\n`;
+    escpos += `${formatCurrency(subtotal)}\n`;
+    escpos += '\x1B\x21\x00'; // Normal size
+    
+    escpos += '================================\n';
+    
+    // Footer
+    escpos += '\x1B\x61\x01'; // Center alignment
+    escpos += 'Thank you for your business!\n';
+    escpos += `Status: ${transaction.status.toUpperCase()}\n`;
+    escpos += `${new Date().toLocaleDateString('en-PH')} ${new Date().toLocaleTimeString('en-PH')}\n`;
+    
+    // Cut paper and eject
+    escpos += '\x1B\x64\x03'; // Feed 3 lines
+    escpos += '\x1D\x56\x41'; // Cut paper
+    
+    return escpos;
+  };
+
+  const downloadESCPOSFile = () => {
+    const escposData = generateESCPOSCommands();
+    const blob = new Blob([escposData], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `receipt-${transaction.id.slice(-8)}.prn`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    URL.revokeObjectURL(url);
+    
+    alert('ESC/POS file downloaded! Send this file directly to your thermal printer.');
+  };
+
+  const generateThermalReceiptHtml = () => {
+    const receiptDate = new Date(transaction.timestamp).toLocaleDateString('en-PH', {
+      year: 'numeric',
+      month: '2-digit', 
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    });
+
+    const subtotal = getDisplaySubtotal();
+
+    // Generate items list
+    const itemsHtml = transaction.items.map(item => {
+      const quantity = item.weight ? `${item.weight} kg` : `${item.pieces} pcs`;
+      const itemTotal = item.total || ((item.weight || item.pieces || 0) * item.price);
+      
+      return `
+        <tr>
+          <td style="padding: 2px 0; font-size: 11px; vertical-align: top;">${item.name}</td>
+          <td style="padding: 2px 0; font-size: 11px; text-align: right; vertical-align: top;">${formatCurrency(itemTotal)}</td>
+        </tr>
+        <tr>
+          <td colspan="2" style="padding: 0 0 4px 0; font-size: 10px; color: #666;">
+            ${quantity} × ${formatCurrency(item.price)}
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Receipt - ${transaction.id}</title>
+        <style>
+          /* Thermal printer optimized styles */
+          body {
+            margin: 0;
+            padding: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.2;
+            background: white;
+            color: black;
+            width: 58mm; /* Standard thermal paper width */
+            max-width: 58mm;
+          }
+          
+          .header {
+            text-align: center;
+            margin-bottom: 12px;
+            border-bottom: 1px dashed #000;
+            padding-bottom: 8px;
+          }
+          
+          .shop-name {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 4px;
+          }
+          
+          .shop-info {
+            font-size: 10px;
+            line-height: 1.3;
+            margin-bottom: 2px;
+          }
+          
+          .receipt-info {
+            margin-bottom: 12px;
+            font-size: 11px;
+          }
+          
+          .receipt-info div {
+            margin-bottom: 2px;
+          }
+          
+          .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 8px;
+          }
+          
+          .items-header {
+            border-bottom: 1px dashed #000;
+            margin-bottom: 4px;
+          }
+          
+          .totals {
+            border-top: 1px dashed #000;
+            padding-top: 6px;
+            font-size: 11px;
+          }
+          
+          .totals .total-line {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2px;
+          }
+          
+          .grand-total {
+            font-weight: bold;
+            font-size: 13px;
+            border-top: 1px solid #000;
+            padding-top: 4px;
+            margin-top: 4px;
+          }
+          
+          .footer {
+            text-align: center;
+            margin-top: 12px;
+            font-size: 10px;
+            border-top: 1px dashed #000;
+            padding-top: 8px;
+          }
+          
+          @media print {
+            body { 
+              margin: 0; 
+              padding: 4px;
+              -webkit-print-color-adjust: exact;
+            }
+            .no-print { display: none; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="shop-name">JUNKSHOP MANAGEMENT</div>
+          <div class="shop-info">Scrap Metal & Materials</div>
+          <div class="shop-info">Receipt</div>
+        </div>
+
+        <div class="receipt-info">
+          <div><strong>Receipt #:</strong> ${transaction.id.slice(-8).toUpperCase()}</div>
+          <div><strong>Date:</strong> ${receiptDate}</div>
+          <div><strong>Type:</strong> ${transaction.type === 'buy' ? 'PURCHASE' : 'SALE'}</div>
+          <div><strong>Employee:</strong> ${transaction.employee}</div>
+          ${transaction.customerName ? `<div><strong>Customer:</strong> ${transaction.customerName}</div>` : ''}
+          ${transaction.location ? `<div><strong>Location:</strong> ${transaction.location}</div>` : ''}
+        </div>
+
+        <div class="items-header">
+          <strong>ITEMS:</strong>
+        </div>
+        
+        <table class="items-table">
+          ${itemsHtml}
+        </table>
+
+        <div class="totals">
+          <div class="total-line">
+            <span>Subtotal:</span>
+            <span>${formatCurrency(subtotal)}</span>
+          </div>
+          
+          <div class="total-line grand-total">
+            <span>TOTAL ${transaction.type === 'buy' ? 'PAID:' : 'RECEIVED:'}</span>
+            <span>${formatCurrency(subtotal)}</span>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div>Thank you for your business!</div>
+          <div style="margin-top: 8px; font-size: 9px;">
+            Transaction Status: ${transaction.status.toUpperCase()}
+          </div>
+          <div style="margin-top: 4px; font-size: 9px;">
+            ${new Date().toLocaleDateString('en-PH')} ${new Date().toLocaleTimeString('en-PH')}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
   };
 
   const calculateItemSubtotal = () => {
@@ -189,20 +570,30 @@ export default function TransactionDetails({
   };
 
   const updateItem = (itemId: string, field: keyof EditableItem, value: string | number) => {
-    setEditedItems(prev => prev.map(item => {
-      if (item.id === itemId) {
-        const updatedItem = { ...item, [field]: value };
-        
-        // Recalculate total when quantity or price changes
-        if (field === 'weight' || field === 'pieces' || field === 'price') {
-          const quantity = updatedItem.weight || updatedItem.pieces || 0;
-          updatedItem.total = quantity * updatedItem.price;
+    console.log('🔄 Updating item:', itemId, 'field:', field, 'value:', value);
+    
+    setEditedItems(prev => {
+      const updated = prev.map(item => {
+        if (item.id === itemId) {
+          const updatedItem = { ...item, [field]: value };
+          
+          // Recalculate total when quantity or price changes
+          if (field === 'weight' || field === 'pieces' || field === 'price') {
+            const quantity = updatedItem.weight || updatedItem.pieces || 0;
+            const price = updatedItem.price || 0;
+            const newTotal = quantity * price;
+            updatedItem.total = newTotal;
+            console.log(`📊 Recalculated total for ${item.name}: ${quantity} × ${price} = ${newTotal}`);
+          }
+          
+          return updatedItem;
         }
-        
-        return updatedItem;
-      }
-      return item;
-    }));
+        return item;
+      });
+      
+      console.log('✅ Updated items state:', updated);
+      return updated;
+    });
   };
 
   const addNewItem = () => {
@@ -238,7 +629,9 @@ export default function TransactionDetails({
     );
   };
 
-  const saveChanges = () => {
+  const saveChanges = async () => {
+    try {
+      setIsSavingChanges(true);
     const updatedTransaction: Transaction = {
       ...editedTransaction,
       items: editedItems.map(item => ({
@@ -247,15 +640,20 @@ export default function TransactionDetails({
         pieces: item.pieces,
         price: item.price,
         total: item.total,
-        images: item.images
+          images: item.images
       })),
       subtotal: calculateItemSubtotal(),
       total: calculateTransactionTotal(),
-      timestamp: editedTransaction.timestamp // Keep as string for supabase interface
+        timestamp: editedTransaction.timestamp // Keep as string for supabase interface
     };
 
-    onUpdate(updatedTransaction);
+      await onUpdate(updatedTransaction);
     setIsEditing(false);
+    } catch (error) {
+      console.error('Error saving transaction changes:', error);
+    } finally {
+      setIsSavingChanges(false);
+    }
   };
 
   const handleDelete = () => {
@@ -268,6 +666,8 @@ export default function TransactionDetails({
            JSON.stringify(editedItems.map(item => ({ ...item, id: undefined }))) !== 
            JSON.stringify(transaction.items.map(item => ({ ...item, id: undefined })));
   };
+
+
 
   return (
     <div className="p-4 max-w-4xl mx-auto space-y-6">
@@ -293,28 +693,42 @@ export default function TransactionDetails({
           {!readOnly && !isEditing ? (
             <>
               {canPrintReceipt() && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
                 <Button variant="outline">
                   <Receipt className="h-4 w-4 mr-2" />
                   Print Receipt
+                      <ChevronDown className="h-4 w-4 ml-2" />
                 </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    <DropdownMenuItem onClick={printThermalReceipt}>
+                      <Printer className="h-4 w-4 mr-2" />
+                      Print HTML Receipt
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={downloadESCPOSFile}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Download ESC/POS File
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               )}
               
               {/* Simple Payment Toggle Button for Owners */}
-              {userRole === 'owner' && transaction.status === 'for-payment' && (
+              {userRole === 'owner' && currentStatus === 'for-payment' && (
                 <Button 
                   variant="default"
                   className="bg-green-600 hover:bg-green-700 text-white"
-                  onClick={() => {
-                    const updatedTransaction = {
-                      ...transaction,
-                      status: 'completed' as const,
-                      completedAt: new Date().toISOString()
-                    };
-                    onUpdate(updatedTransaction);
-                  }}
+                  onClick={handleMarkAsPaid}
+                  disabled={isMarkingPaid}
                 >
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Mark as Paid
+                  {isMarkingPaid ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <CheckCircle className="h-4 w-4 mr-2" />
+                  )}
+                  {isMarkingPaid ? 'Marking as Paid...' : 'Mark as Paid'}
                 </Button>
               )}
               
@@ -331,10 +745,14 @@ export default function TransactionDetails({
               </Button>
               <Button 
                 onClick={saveChanges}
-                disabled={!hasChanges()}
+                disabled={!hasChanges() || isSavingChanges}
               >
+                {isSavingChanges ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
                 <Save className="h-4 w-4 mr-2" />
-                Save Changes
+                )}
+                {isSavingChanges ? 'Saving Changes...' : 'Save Changes'}
               </Button>
             </>
           ) : readOnly ? (
@@ -394,14 +812,14 @@ export default function TransactionDetails({
                     </SelectContent>
                   </Select>
                 ) : (
-                  <div className="mt-1">
-                    {getStatusBadge(transaction.status)}
-                    {transaction.status === 'for-payment' && userRole !== 'owner' && (
+                <div className="mt-1">
+                    {getStatusBadge()}
+                    {currentStatus === 'for-payment' && userRole !== 'owner' && (
                       <p className="text-xs text-gray-500 mt-1">
                         Only owners can mark transactions as completed
                       </p>
                     )}
-                  </div>
+                </div>
                 )}
               </div>
               <div>
@@ -568,12 +986,16 @@ export default function TransactionDetails({
                         <Input
                           type="number"
                           step="0.1"
+                          min="0"
                           value={item.weight !== undefined ? item.weight : item.pieces}
-                          onChange={(e) => updateItem(
-                            item.id, 
-                            item.weight !== undefined ? 'weight' : 'pieces', 
-                            parseFloat(e.target.value) || 0
-                          )}
+                          onChange={(e) => {
+                            const value = parseFloat(e.target.value);
+                            updateItem(
+                              item.id, 
+                              item.weight !== undefined ? 'weight' : 'pieces', 
+                              isNaN(value) ? 0 : value
+                            );
+                          }}
                           className="mt-1"
                         />
                       </div>
@@ -585,8 +1007,12 @@ export default function TransactionDetails({
                         <Input
                           type="number"
                           step="0.01"
+                          min="0"
                           value={item.price}
-                          onChange={(e) => updateItem(item.id, 'price', parseFloat(e.target.value) || 0)}
+                          onChange={(e) => {
+                            const value = parseFloat(e.target.value);
+                            updateItem(item.id, 'price', isNaN(value) ? 0 : value);
+                          }}
                           className="mt-1"
                         />
                       </div>
@@ -594,8 +1020,11 @@ export default function TransactionDetails({
                       <div>
                         <Label className="text-sm">Total</Label>
                         <div className="mt-1 h-9 px-3 py-2 bg-gray-100 rounded text-sm font-medium flex items-center">
-                          {formatCurrency(item.total)}
+                          {formatCurrency((item.weight || item.pieces || 0) * item.price)}
                         </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {item.weight ? `${item.weight} kg` : `${item.pieces} pieces`} × {formatCurrency(item.price)} = {formatCurrency((item.weight || item.pieces || 0) * item.price)}
+                        </p>
                       </div>
 
                       <div className="flex items-end">

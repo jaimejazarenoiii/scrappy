@@ -107,6 +107,30 @@ export function useRealtimeData() {
     }
   };
 
+  // Optimized method for simple status updates (much faster)
+  const updateTransactionStatus = async (transactionId: string, status: 'in-progress' | 'for-payment' | 'completed' | 'cancelled', completedAt?: string) => {
+    try {
+      console.log('🚀 Fast status update for:', transactionId, 'to', status);
+      
+      // Update database
+      await supabaseDataService.updateTransactionStatus(transactionId, status, completedAt);
+      
+      // Update local state optimistically (no full refetch needed)
+      setTransactions(prevTransactions => 
+        prevTransactions.map(t => 
+          t.id === transactionId 
+            ? { ...t, status, ...(completedAt ? { completedAt } : {}) }
+            : t
+        )
+      );
+      
+      console.log('✅ Local state updated optimistically');
+    } catch (error) {
+      console.error('Error updating transaction status:', error);
+      throw error;
+    }
+  };
+
   const addEmployee = async (employee: Employee) => {
     try {
       await supabaseDataService.saveEmployee(employee);
@@ -246,6 +270,7 @@ export function useRealtimeData() {
     // Actions
     addTransaction,
     updateTransaction,
+    updateTransactionStatus,
     addEmployee,
     updateEmployee,
     deleteEmployee,

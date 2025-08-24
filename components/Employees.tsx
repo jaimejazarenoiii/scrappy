@@ -19,7 +19,8 @@ import {
   Trash2,
   CalendarIcon,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 import { Employee, CashAdvance } from '../services/supabaseService';
 import { format } from 'date-fns';
@@ -48,6 +49,7 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
     name: '',
     weeklySalary: '',
   });
+  const [deductingAdvances, setDeductingAdvances] = useState<Set<string>>(new Set());
 
   const formatCurrency = (amount: number) => 
     new Intl.NumberFormat('en-PH', { 
@@ -123,9 +125,16 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
     if (!onUpdateAdvanceStatus) return;
     
     try {
+      setDeductingAdvances(prev => new Set(prev).add(advanceId));
       await onUpdateAdvanceStatus(advanceId, 'deducted', employeeId);
     } catch (error) {
       console.error('Error deducting advance:', error);
+    } finally {
+      setDeductingAdvances(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(advanceId);
+        return newSet;
+      });
     }
   };
 
@@ -432,8 +441,16 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
                                   size="sm" 
                                   variant="outline"
                                   onClick={() => employee.id && deductAdvance(employee.id, advance.id)}
+                                  disabled={deductingAdvances.has(advance.id)}
                                 >
-                                  Mark as Deducted
+                                  {deductingAdvances.has(advance.id) ? (
+                                    <>
+                                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                      Deducting...
+                                    </>
+                                  ) : (
+                                    'Mark as Deducted'
+                                  )}
                                 </Button>
                               )}
                             </div>

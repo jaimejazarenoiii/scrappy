@@ -43,6 +43,7 @@ function AppContent() {
     error: dataError,
     addTransaction,
     updateTransaction,
+    updateTransactionStatus,
     addEmployee,
     updateEmployee,
     deleteEmployee,
@@ -209,6 +210,31 @@ function AppContent() {
     }
   };
 
+
+
+  const handleTransactionStatusUpdate = async (updatedTransaction: Transaction) => {
+    try {
+      console.log('🚀 Using fast status update method');
+      await updateTransactionStatus(
+        updatedTransaction.id, 
+        updatedTransaction.status,
+        updatedTransaction.completedAt
+      );
+      
+      // Update the local selectedTransactionDetails if it's the same transaction
+      if (selectedTransactionDetails && selectedTransactionDetails.id === updatedTransaction.id) {
+        setSelectedTransactionDetails({
+          ...selectedTransactionDetails,
+          status: updatedTransaction.status,
+          ...(updatedTransaction.completedAt ? { completedAt: updatedTransaction.completedAt } : {})
+        });
+      }
+    } catch (error) {
+      console.error('Error updating transaction status:', error);
+      throw error;
+    }
+  };
+
   const handleStatusUpdate = async (transactionId: string, newStatus: TransactionStatus) => {
     try {
       const transaction = transactions.find(t => t.id === transactionId);
@@ -310,7 +336,7 @@ function AppContent() {
         );
       case 'buy-scrap':
         return (
-                    <BuyScrap 
+          <BuyScrap 
             onBack={() => setCurrentView('dashboard')}
             onComplete={handleAddTransaction}
             employees={employees}
@@ -320,9 +346,9 @@ function AppContent() {
             onSaveDraft={handleTransactionUpdate}
           />
         );
-      case 'sell-scrap':
+            case 'sell-scrap':
         return (
-                    <SellScrap 
+          <SellScrap
             onBack={() => setCurrentView('dashboard')}
             onComplete={handleAddTransaction}
             employees={employees}
@@ -356,6 +382,8 @@ function AppContent() {
         return (
           <Reports 
             transactions={transactions}
+            cashState={{ balance: currentBalance, entries: cashEntries }}
+            employees={employees}
             onBack={() => setCurrentView('dashboard')} 
             onTransactionClick={handleTransactionClick}
           />
@@ -388,6 +416,7 @@ function AppContent() {
                 setSelectedTransactionId(null);
               }}
               onUpdate={handleTransactionUpdate}
+              onUpdateStatus={handleTransactionStatusUpdate}
               readOnly={!canEdit}
               userRole={user.role}
             />

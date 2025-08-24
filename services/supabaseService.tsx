@@ -562,6 +562,31 @@ class SupabaseDataService {
     }
   }
 
+  // Optimized method for simple status updates
+  async updateTransactionStatus(transactionId: string, status: 'in-progress' | 'for-payment' | 'completed' | 'cancelled', completedAt?: string): Promise<void> {
+    try {
+      console.time('updateTransactionStatus');
+      
+      const updateData: any = { status };
+      if (completedAt) {
+        updateData.completed_at = completedAt;
+      }
+      
+      const { error } = await supabase
+        .from('transactions')
+        .update(updateData)
+        .eq('id', transactionId);
+      
+      if (error) throw error;
+      
+      console.log('✅ Transaction status updated successfully');
+      console.timeEnd('updateTransactionStatus');
+    } catch (error) {
+      console.error('❌ Error updating transaction status:', error);
+      throw error;
+    }
+  }
+
   async saveTransaction(transaction: Transaction): Promise<void> {
     try {
       const { items, ...transactionData } = transaction;
