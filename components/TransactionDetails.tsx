@@ -354,11 +354,11 @@ export default function TransactionDetails({
       
       return `
         <tr>
-          <td style="padding: 2px 0; font-size: 11px; vertical-align: top;">${item.name}</td>
-          <td style="padding: 2px 0; font-size: 11px; text-align: right; vertical-align: top;">${formatCurrency(itemTotal)}</td>
+          <td style="padding: 2px 0; font-size: 32px; vertical-align: top;">${item.name}</td>
+          <td style="padding: 2px 0; font-size: 32px; text-align: right; vertical-align: top; font-weight: bold;">${formatCurrency(itemTotal)}</td>
         </tr>
         <tr>
-          <td colspan="2" style="padding: 0 0 4px 0; font-size: 10px; color: #666;">
+          <td colspan="2" style="padding: 0 0 3px 0; font-size: 24px; color: #000;">
             ${quantity} × ${formatCurrency(item.price)}
           </td>
         </tr>
@@ -371,62 +371,73 @@ export default function TransactionDetails({
       <head>
         <title>Receipt - ${transaction.id}</title>
         <style>
-          /* Thermal printer optimized styles */
+          /* Thermal printer optimized styles - Large and \\\
           body {
             margin: 0;
-            padding: 8px;
+            padding: 4px;
             font-family: 'Courier New', monospace;
-            font-size: 12px;
+            font-size: 24px;
             line-height: 1.2;
             background: white;
             color: black;
             width: 58mm; /* Standard thermal paper width */
             max-width: 58mm;
+            letter-spacing: 0.5px;
           }
           
           .header {
             text-align: center;
-            margin-bottom: 12px;
-            border-bottom: 1px dashed #000;
-            padding-bottom: 8px;
+            margin-bottom: 8px;
+            border-bottom: 3px dashed #000;
+            padding-bottom: 4px;
           }
           
           .shop-name {
-            font-size: 16px;
+            font-size: 32px;
             font-weight: bold;
-            margin-bottom: 4px;
+            margin-bottom: 2px;
+            text-align: center;
+            letter-spacing: 1px;
           }
           
           .shop-info {
-            font-size: 10px;
-            line-height: 1.3;
-            margin-bottom: 2px;
+            font-size: 22px;
+            line-height: 1.1;
+            margin-bottom: 1px;
+            text-align: center;
           }
           
           .receipt-info {
-            margin-bottom: 12px;
-            font-size: 11px;
+            margin-bottom: 8px;
+            margin-top: 12px;
+            font-size: 24px;
+            text-align: center;
           }
           
           .receipt-info div {
             margin-bottom: 2px;
+            text-align: left;
           }
           
           .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
+            font-size: 20px;
           }
           
           .items-header {
-            border-bottom: 1px dashed #000;
-            margin-bottom: 4px;
+            border-bottom: 3px dashed #000;
+            margin-bottom: 2px;
+            font-size: 26px;
+            font-weight: bold;
+            text-align: center;
           }
           
           .totals {
-            border-top: 1px dashed #000;
-            padding-top: 6px;
-            font-size: 11px;
+            border-top: 3px dashed #000;
+            padding-top: 3px;
+            font-size: 32px;
           }
           
           .totals .total-line {
@@ -437,18 +448,18 @@ export default function TransactionDetails({
           
           .grand-total {
             font-weight: bold;
-            font-size: 13px;
-            border-top: 1px solid #000;
-            padding-top: 4px;
-            margin-top: 4px;
+            font-size: 32px;
+            border-top: 3px solid #000;
+            padding-top: 2px;
+            margin-top: 2px;
           }
           
           .footer {
             text-align: center;
-            margin-top: 12px;
-            font-size: 10px;
-            border-top: 1px dashed #000;
-            padding-top: 8px;
+            margin-top: 8px;
+            font-size: 16px;
+            border-top: 3px dashed #000;
+            padding-top: 4px;
           }
           
           @media print {
@@ -463,7 +474,7 @@ export default function TransactionDetails({
       </head>
       <body>
         <div class="header">
-          <div class="shop-name">JUNKSHOP MANAGEMENT</div>
+          <div class="shop-name">Jazareno Scrap Trading</div>
           <div class="shop-info">Scrap Metal & Materials</div>
           <div class="shop-info">Receipt</div>
         </div>
@@ -498,11 +509,11 @@ export default function TransactionDetails({
         </div>
 
         <div class="footer">
-          <div>Thank you for your business!</div>
-          <div style="margin-top: 8px; font-size: 9px;">
+          <div style="font-size: 18px;">Thank you for your business!</div>
+          <div style="margin-top: 4px; font-size: 16px;">
             Transaction Status: ${transaction.status.toUpperCase()}
           </div>
-          <div style="margin-top: 4px; font-size: 9px;">
+          <div style="margin-top: 2px; font-size: 16px;">
             ${new Date().toLocaleDateString('en-PH')} ${new Date().toLocaleTimeString('en-PH')}
           </div>
         </div>
