@@ -335,6 +335,150 @@ export default function TransactionDetails({
     alert('ESC/POS file downloaded! Send this file directly to your thermal printer.');
   };
 
+  const exportReceiptAsImage = () => {
+    // Create a new window for image export (same as PDF export)
+    const exportWindow = window.open('', '_blank', 'width=400,height=600');
+    
+    if (!exportWindow) {
+      alert('Please allow popups to export receipts');
+      return;
+    }
+
+    // Generate thermal receipt HTML (same as PDF export)
+    const receiptHtml = generateThermalReceiptHtml();
+    
+    // Write the receipt HTML to the new window (same as PDF export)
+    exportWindow.document.write(receiptHtml);
+    exportWindow.document.close();
+    
+    // Wait for content to load, then capture as image
+    exportWindow.onload = () => {
+      try {
+        // Use html2canvas to capture the receipt as image
+        import('html2canvas').then(({ default: html2canvas }) => {
+          const receiptElement = exportWindow.document.body;
+          if (!receiptElement) {
+            throw new Error('Could not access window content');
+          }
+          
+          html2canvas(receiptElement, {
+            scale: 4, // High resolution (4x)
+            backgroundColor: '#ffffff',
+            width: 220, // 58mm in pixels
+            height: receiptElement.scrollHeight * 4,
+            useCORS: true,
+            allowTaint: true,
+            removeContainer: true,
+            logging: false,
+            imageTimeout: 0,
+            ignoreElements: (element: Element) => {
+              // Ignore elements with no content or whitespace
+              return !element.textContent || element.textContent.trim() === '';
+            }
+          }).then((canvas: HTMLCanvasElement) => {
+            // Post-process canvas to crop whitespace
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              const data = imageData.data;
+              
+              // Find the bounds of actual content (very conservative)
+              let minX = canvas.width;
+              let maxX = 0;
+              let minY = canvas.height;
+              let maxY = 0;
+              
+              // Scan for content bounds - only detect actual text/content
+              for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                  const index = (y * canvas.width + x) * 4;
+                  const r = data[index];
+                  const g = data[index + 1];
+                  const b = data[index + 2];
+                  
+                  // Only detect actual content (very dark pixels)
+                  if (r < 100 || g < 100 || b < 100) {
+                    minX = Math.min(minX, x);
+                    maxX = Math.max(maxX, x);
+                    minY = Math.min(minY, y);
+                    maxY = Math.max(maxY, y);
+                  }
+                }
+              }
+              
+              // Ensure we don't crop too aggressively
+              if (minX === canvas.width) minX = 0;
+              if (maxX === 0) maxX = canvas.width - 1;
+              if (minY === canvas.height) minY = 0;
+              if (maxY === 0) maxY = canvas.height - 1;
+              
+              // Add very generous padding to preserve ALL whitespace
+              const padding = 64; // 16 pixels * 4 scale - very generous padding
+              minX = Math.max(0, minX - padding);
+              maxX = Math.min(canvas.width - 1, maxX + padding);
+              minY = Math.max(0, minY - padding);
+              maxY = Math.min(canvas.height - 1, maxY + padding);
+              
+              // Create new canvas with cropped dimensions
+              const croppedCanvas = document.createElement('canvas');
+              const croppedWidth = maxX - minX + 1;
+              const croppedHeight = maxY - minY + 1;
+              
+              croppedCanvas.width = croppedWidth;
+              croppedCanvas.height = croppedHeight;
+              
+              const croppedCtx = croppedCanvas.getContext('2d');
+              if (croppedCtx) {
+                // Draw only the content area to the new canvas
+                croppedCtx.drawImage(
+                  canvas,
+                  minX, minY, croppedWidth, croppedHeight,
+                  0, 0, croppedWidth, croppedHeight
+                );
+                
+                // Convert cropped canvas to blob
+                croppedCanvas.toBlob((blob: Blob | null) => {
+                  if (blob) {
+                    // Create download link
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = `receipt-${transaction.id}-${Date.now()}.png`;
+                    link.style.display = 'none';
+                    
+                    // Trigger download
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    // Clean up
+                    URL.revokeObjectURL(url);
+                    exportWindow.close();
+                    
+                    console.log('Receipt image downloaded successfully!');
+                  }
+                }, 'image/png', 1.0); // High quality PNG
+              }
+            }
+          }).catch((error: Error) => {
+          }).catch((error: Error) => {
+            console.error('Error generating image:', error);
+            alert('Error generating receipt image. Please try again.');
+            exportWindow.close();
+          });
+        }).catch((error: Error) => {
+          console.error('Error loading html2canvas:', error);
+          alert('Image generation library not available. Please install html2canvas.');
+          exportWindow.close();
+        });
+      } catch (error: unknown) {
+        console.error('Error in image export:', error);
+        alert('Error exporting receipt as image. Please try again.');
+        exportWindow.close();
+      }
+    };
+  };
+
   const generateThermalReceiptHtml = () => {
     const receiptDate = new Date(transaction.timestamp).toLocaleDateString('en-PH', {
       year: 'numeric',
@@ -354,11 +498,11 @@ export default function TransactionDetails({
       
       return `
         <tr>
-          <td style="padding: 2px 0; font-size: 32px; vertical-align: top;">${item.name}</td>
-          <td style="padding: 2px 0; font-size: 32px; text-align: right; vertical-align: top; font-weight: bold;">${formatCurrency(itemTotal)}</td>
+          <td style="padding: 5px 0; font-size: 64px; vertical-align: top;">${item.name}</td>
+          <td style="padding: 5px 0; font-size: 64px; text-align: right; vertical-align: top; font-weight: bold;">${formatCurrency(itemTotal)}</td>
         </tr>
         <tr>
-          <td colspan="2" style="padding: 0 0 3px 0; font-size: 24px; color: #000;">
+          <td colspan="2" style="padding: 0 0 8px 0; font-size: 48px; color: #000;">
             ${quantity} × ${formatCurrency(item.price)}
           </td>
         </tr>
@@ -371,95 +515,100 @@ export default function TransactionDetails({
       <head>
         <title>Receipt - ${transaction.id}</title>
         <style>
-          /* Thermal printer optimized styles - Large and \\\
+          /* A4 Receipt styles - Scaled up for A4 size */
+          @page {
+            size: A4 portrait;
+            margin: 20mm;
+          }
+          
           body {
             margin: 0;
-            padding: 4px;
+            padding: 20px;
             font-family: 'Courier New', monospace;
-            font-size: 24px;
-            line-height: 1.2;
+            font-size: 48px;
+            line-height: 1.3;
             background: white;
             color: black;
-            width: 58mm; /* Standard thermal paper width */
-            max-width: 58mm;
-            letter-spacing: 0.5px;
+            width: 210mm; /* A4 width */
+            max-width: 210mm;
+            letter-spacing: 1px;
           }
           
           .header {
             text-align: center;
-            margin-bottom: 8px;
-            border-bottom: 3px dashed #000;
-            padding-bottom: 4px;
+            margin-bottom: 20px;
+            border-bottom: 6px dashed #000;
+            padding-bottom: 10px;
           }
           
           .shop-name {
-            font-size: 32px;
+            font-size: 64px;
             font-weight: bold;
-            margin-bottom: 2px;
+            margin-bottom: 5px;
             text-align: center;
-            letter-spacing: 1px;
+            letter-spacing: 2px;
           }
           
           .shop-info {
-            font-size: 22px;
-            line-height: 1.1;
-            margin-bottom: 1px;
+            font-size: 44px;
+            line-height: 1.2;
+            margin-bottom: 3px;
             text-align: center;
           }
           
           .receipt-info {
-            margin-bottom: 8px;
-            margin-top: 12px;
-            font-size: 24px;
+            margin-bottom: 20px;
+            margin-top: 25px;
+            font-size: 48px;
             text-align: center;
           }
           
           .receipt-info div {
-            margin-bottom: 2px;
+            margin-bottom: 5px;
             text-align: left;
           }
           
           .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 4px;
-            font-size: 20px;
+            margin-bottom: 10px;
+            font-size: 40px;
           }
           
           .items-header {
-            border-bottom: 3px dashed #000;
-            margin-bottom: 2px;
-            font-size: 26px;
+            border-bottom: 6px dashed #000;
+            margin-bottom: 5px;
+            font-size: 52px;
             font-weight: bold;
             text-align: center;
           }
           
           .totals {
-            border-top: 3px dashed #000;
-            padding-top: 3px;
-            font-size: 32px;
+            border-top: 6px dashed #000;
+            padding-top: 8px;
+            font-size: 64px;
           }
           
           .totals .total-line {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 2px;
+            margin-bottom: 5px;
           }
           
           .grand-total {
             font-weight: bold;
-            font-size: 32px;
-            border-top: 3px solid #000;
-            padding-top: 2px;
-            margin-top: 2px;
+            font-size: 64px;
+            border-top: 6px solid #000;
+            padding-top: 5px;
+            margin-top: 5px;
           }
           
           .footer {
             text-align: center;
-            margin-top: 8px;
-            font-size: 16px;
-            border-top: 3px dashed #000;
-            padding-top: 4px;
+            margin-top: 20px;
+            font-size: 32px;
+            border-top: 6px dashed #000;
+            padding-top: 10px;
           }
           
           @media print {
@@ -509,11 +658,11 @@ export default function TransactionDetails({
         </div>
 
         <div class="footer">
-          <div style="font-size: 18px;">Thank you for your business!</div>
-          <div style="margin-top: 4px; font-size: 16px;">
+          <div style="font-size: 36px;">Thank you for your business!</div>
+          <div style="margin-top: 8px; font-size: 32px;">
             Transaction Status: ${transaction.status.toUpperCase()}
           </div>
-          <div style="margin-top: 2px; font-size: 16px;">
+          <div style="margin-top: 4px; font-size: 32px;">
             ${new Date().toLocaleDateString('en-PH')} ${new Date().toLocaleTimeString('en-PH')}
           </div>
         </div>
@@ -716,6 +865,10 @@ export default function TransactionDetails({
                     <DropdownMenuItem onClick={printThermalReceipt}>
                       <Printer className="h-4 w-4 mr-2" />
                       Print HTML Receipt
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={exportReceiptAsImage}>
+                      <ImageIcon className="h-4 w-4 mr-2" />
+                      Download as High-Res Image
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={downloadESCPOSFile}>
