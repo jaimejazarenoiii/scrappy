@@ -467,11 +467,11 @@ For more information, see https://radix-ui.com/primitives/docs/components/${t.do
 `,ee+=`${new Date().toLocaleDateString("en-PH")} ${new Date().toLocaleTimeString("en-PH")}
 `,ee+="\x1Bd",ee+="VA",ee},F=()=>{const q=z(),te=new Blob([q],{type:"application/octet-stream"}),ee=URL.createObjectURL(te),Y=document.createElement("a");Y.href=ee,Y.download=`receipt-${e.id.slice(-8)}.prn`,document.body.appendChild(Y),Y.click(),document.body.removeChild(Y),URL.revokeObjectURL(ee),alert("ESC/POS file downloaded! Send this file directly to your thermal printer.")},Z=()=>{const q=window.open("","_blank","width=400,height=600");if(!q){alert("Please allow popups to export receipts");return}const te=ie();q.document.write(te),q.document.close(),q.onload=()=>{try{Bc(async()=>{const{default:ee}=await import("./html2canvas.esm-QH1iLAAe.js");return{default:ee}},[]).then(({default:ee})=>{const Y=q.document.body;if(!Y)throw new Error("Could not access window content");ee(Y,{scale:4,backgroundColor:"#ffffff",width:220,height:Y.scrollHeight*4,useCORS:!0,allowTaint:!0,removeContainer:!0,logging:!1,imageTimeout:0,ignoreElements:fe=>!fe.textContent||fe.textContent.trim()===""}).then(fe=>{const xe=fe.getContext("2d");if(xe){const He=xe.getImageData(0,0,fe.width,fe.height).data;let Ce=fe.width,Ve=0,et=fe.height,Xe=0;for(let ut=0;ut<fe.height;ut++)for(let Mt=0;Mt<fe.width;Mt++){const Yt=(ut*fe.width+Mt)*4,dn=He[Yt],$t=He[Yt+1],Hn=He[Yt+2];(dn<100||$t<100||Hn<100)&&(Ce=Math.min(Ce,Mt),Ve=Math.max(Ve,Mt),et=Math.min(et,ut),Xe=Math.max(Xe,ut))}Ce===fe.width&&(Ce=0),Ve===0&&(Ve=fe.width-1),et===fe.height&&(et=0),Xe===0&&(Xe=fe.height-1);const un=64;Ce=Math.max(0,Ce-un),Ve=Math.min(fe.width-1,Ve+un),et=Math.max(0,et-un),Xe=Math.min(fe.height-1,Xe+un);const Xt=document.createElement("canvas"),tr=Ve-Ce+1,rt=Xe-et+1;Xt.width=tr,Xt.height=rt;const Ye=Xt.getContext("2d");Ye&&(Ye.drawImage(fe,Ce,et,tr,rt,0,0,tr,rt),Xt.toBlob(ut=>{if(ut){const Mt=URL.createObjectURL(ut),Yt=document.createElement("a");Yt.href=Mt,Yt.download=`receipt-${e.id}-${Date.now()}.png`,Yt.style.display="none",document.body.appendChild(Yt),Yt.click(),document.body.removeChild(Yt),URL.revokeObjectURL(Mt),q.close(),console.log("Receipt image downloaded successfully!")}},"image/png",1))}}).catch(fe=>{}).catch(fe=>{console.error("Error generating image:",fe),alert("Error generating receipt image. Please try again."),q.close()})}).catch(ee=>{console.error("Error loading html2canvas:",ee),alert("Image generation library not available. Please install html2canvas."),q.close()})}catch(ee){console.error("Error in image export:",ee),alert("Error exporting receipt as image. Please try again."),q.close()}}},ie=()=>{const q=new Date(e.timestamp).toLocaleDateString("en-PH",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:!0}),te=L(),ee=e.items.map(Y=>{const fe=Y.weight?`${Y.weight} kg`:`${Y.pieces} pcs`,xe=Y.total||(Y.weight||Y.pieces||0)*Y.price;return`
         <tr>
-          <td style="padding: 2px 0; font-size: 16px; vertical-align: top;">${Y.name}</td>
-          <td style="padding: 2px 0; font-size: 16px; text-align: right; vertical-align: top; font-weight: bold;">${C(xe)}</td>
+          <td style="padding: 5px 0; font-size: 64px; vertical-align: top;">${Y.name}</td>
+          <td style="padding: 5px 0; font-size: 64px; text-align: right; vertical-align: top; font-weight: bold;">${C(xe)}</td>
         </tr>
         <tr>
-          <td colspan="2" style="padding: 0 0 3px 0; font-size: 12px; color: #000;">
+          <td colspan="2" style="padding: 0 0 8px 0; font-size: 48px; color: #000;">
             ${fe} × ${C(Y.price)}
           </td>
         </tr>
@@ -481,95 +481,100 @@ For more information, see https://radix-ui.com/primitives/docs/components/${t.do
       <head>
         <title>Receipt - ${e.id}</title>
         <style>
-          /* Thermal printer optimized styles - Large and readable */
+          /* A4 Receipt styles - Scaled up for A4 size */
+          @page {
+            size: A4 portrait;
+            margin: 20mm;
+          }
+          
           body {
             margin: 0;
-            padding: 4px;
+            padding: 20px;
             font-family: 'Courier New', monospace;
-            font-size: 12px;
-            line-height: 1.1;
+            font-size: 48px;
+            line-height: 1.3;
             background: white;
             color: black;
-            width: 58mm; /* Standard thermal paper width */
-            max-width: 58mm;
-            letter-spacing: 0.2px;
+            width: 210mm; /* A4 width */
+            max-width: 210mm;
+            letter-spacing: 1px;
           }
           
           .header {
             text-align: center;
-            margin-bottom: 8px;
-            border-bottom: 3px dashed #000;
-            padding-bottom: 4px;
+            margin-bottom: 20px;
+            border-bottom: 6px dashed #000;
+            padding-bottom: 10px;
           }
           
           .shop-name {
-            font-size: 16px;
+            font-size: 64px;
             font-weight: bold;
-            margin-bottom: 2px;
+            margin-bottom: 5px;
             text-align: center;
-            letter-spacing: 0.3px;
+            letter-spacing: 2px;
           }
           
           .shop-info {
-            font-size: 12px;
-            line-height: 1.1;
-            margin-bottom: 1px;
+            font-size: 44px;
+            line-height: 1.2;
+            margin-bottom: 3px;
             text-align: center;
           }
           
           .receipt-info {
-            margin-bottom: 8px;
-            margin-top: 12px;
-            font-size: 12px;
+            margin-bottom: 20px;
+            margin-top: 25px;
+            font-size: 48px;
             text-align: center;
           }
           
           .receipt-info div {
-            margin-bottom: 2px;
+            margin-bottom: 5px;
             text-align: left;
           }
           
           .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 4px;
-            font-size: 12px;
+            margin-bottom: 10px;
+            font-size: 40px;
           }
           
           .items-header {
-            border-bottom: 3px dashed #000;
-            margin-bottom: 2px;
-            font-size: 14px;
+            border-bottom: 6px dashed #000;
+            margin-bottom: 5px;
+            font-size: 52px;
             font-weight: bold;
             text-align: center;
           }
           
           .totals {
-            border-top: 3px dashed #000;
-            padding-top: 3px;
-            font-size: 16px;
+            border-top: 6px dashed #000;
+            padding-top: 8px;
+            font-size: 64px;
           }
           
           .totals .total-line {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 2px;
+            margin-bottom: 5px;
           }
           
           .grand-total {
             font-weight: bold;
-            font-size: 16px;
-            border-top: 3px solid #000;
-            padding-top: 2px;
-            margin-top: 2px;
+            font-size: 64px;
+            border-top: 6px solid #000;
+            padding-top: 5px;
+            margin-top: 5px;
           }
           
           .footer {
             text-align: center;
-            margin-top: 8px;
-            font-size: 16px;
-            border-top: 3px dashed #000;
-            padding-top: 4px;
+            margin-top: 20px;
+            font-size: 32px;
+            border-top: 6px dashed #000;
+            padding-top: 10px;
           }
           
           @media print {
@@ -619,11 +624,11 @@ For more information, see https://radix-ui.com/primitives/docs/components/${t.do
         </div>
 
         <div class="footer">
-          <div style="font-size: 10px;">Thank you for your business!</div>
-          <div style="margin-top: 4px; font-size: 10px;">
+          <div style="font-size: 36px;">Thank you for your business!</div>
+          <div style="margin-top: 8px; font-size: 32px;">
             Transaction Status: ${e.status.toUpperCase()}
           </div>
-          <div style="margin-top: 2px; font-size: 10px;">
+          <div style="margin-top: 4px; font-size: 32px;">
             ${new Date().toLocaleDateString("en-PH")} ${new Date().toLocaleTimeString("en-PH")}
           </div>
         </div>
