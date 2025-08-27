@@ -1,4 +1,4 @@
-import { Key, useState, useEffect } from 'react';
+import React, { Key, useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -33,7 +33,7 @@ import {
   CheckCircle,
   CreditCard,
   XCircle,
-  Printer,
+  Printer as PrinterIcon,
   ChevronDown,
   Download,
   Loader2
@@ -230,7 +230,36 @@ export default function TransactionDetails({
     };
   };
 
-  const generateESCPOSCommands = () => {
+
+
+
+
+  const downloadESCPOSFile = () => {
+    try {
+      const escposData = generateBasicESCPOSCommands();
+      const blob = new Blob([escposData], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `receipt-${transaction.id.slice(-8)}.prn`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      URL.revokeObjectURL(url);
+      
+      alert('ESC/POS file downloaded! Send this file directly to your thermal printer.');
+    } catch (error) {
+      console.error('Error generating ESC/POS file:', error);
+      alert('Error generating ESC/POS file. Please try again.');
+    }
+  };
+
+
+
+  // Simple market-style ESC/POS receipt for Android thermal printer apps
+  const generateBasicESCPOSCommands = () => {
     const subtotal = getDisplaySubtotal();
     
     const receiptDate = new Date(transaction.timestamp).toLocaleDateString('en-PH', {
@@ -242,33 +271,32 @@ export default function TransactionDetails({
       hour12: true
     });
 
-    // ESC/POS commands for thermal printers
+    // Ultra-simple market-style receipt - only basic ASCII characters
     let escpos = '';
     
-    // Initialize printer
-    escpos += '\x1B\x40'; // ESC @ - Initialize printer
+    // Initialize printer (minimal commands)
     
-    // Set character size and alignment
-    escpos += '\x1B\x21\x08'; // ESC ! - Set character size (double height)
-    escpos += '\x1B\x61\x01'; // ESC a - Center alignment
-    
-    // Print header
-    escpos += 'JUNKSHOP MANAGEMENT\n';
-    escpos += '\x1B\x21\x00'; // Normal character size
+    // Simple header
+    escpos += 'JAZARENO SCRAP TRADING\n';
     escpos += 'Scrap Metal & Materials\n';
     escpos += 'Receipt\n';
-    escpos += '================================\n';
+    escpos += '--------------------------------\n';
     
-    // Left alignment for details
-    escpos += '\x1B\x61\x00'; // ESC a - Left alignment
-    
-    // Transaction info
-    escpos += `Receipt #: ${transaction.id.slice(-8).toUpperCase()}\n`;
+    // Basic transaction info
+    escpos += `Receipt: ${transaction.id.slice(-8).toUpperCase()}\n`;
     escpos += `Date: ${receiptDate}\n`;
     escpos += `Type: ${transaction.type === 'buy' ? 'PURCHASE' : 'SALE'}\n`;
-    escpos += `Employee: ${transaction.employee}\n`;
     
-    if (transaction.customerName) {
+    // Handle multiple employees
+    const employees = transaction.employee.split(',').map(emp => emp.trim());
+    if (employees.length === 1) {
+      escpos += `Employee: ${transaction.employee}\n`;
+    } else {
+      escpos += `Employees: ${employees.join(', ')}\n`;
+    }
+    
+    // Always show customer name if available
+    if (transaction.customerName && transaction.customerName.trim()) {
       escpos += `Customer: ${transaction.customerName}\n`;
     }
     
@@ -280,59 +308,35 @@ export default function TransactionDetails({
     escpos += 'ITEMS:\n';
     escpos += '--------------------------------\n';
     
-    // Items
+    // Simple items list
     transaction.items.forEach(item => {
       const quantity = item.weight ? `${item.weight} kg` : `${item.pieces} pcs`;
       const itemTotal = item.total || ((item.weight || item.pieces || 0) * item.price);
       
       escpos += `${item.name}\n`;
-      escpos += `  ${quantity} x ${formatCurrency(item.price)}\n`;
-      escpos += `${' '.repeat(32 - formatCurrency(itemTotal).length)}${formatCurrency(itemTotal)}\n`;
+      escpos += `${quantity} x PHP ${item.price.toFixed(2)}\n`;
+      escpos += `Total: PHP ${itemTotal.toFixed(2)}\n`;
+      escpos += '\n';
     });
     
-    escpos += '================================\n';
+    escpos += '--------------------------------\n';
+    escpos += `Subtotal: PHP ${subtotal.toFixed(2)}\n`;
+    escpos += '--------------------------------\n';
     
-    // Customer totals (internal expenses not shown)
-    escpos += `Subtotal:${' '.repeat(32 - 9 - formatCurrency(subtotal).length)}${formatCurrency(subtotal)}\n`;
-    escpos += '================================\n';
+    // Simple total
+    escpos += `TOTAL ${transaction.type === 'buy' ? 'PAID:' : 'RECEIVED:'}\n`;
+    escpos += `PHP ${subtotal.toFixed(2)}\n`;
     
-    // Grand total (use subtotal as customer total, no internal expenses)
-    escpos += '\x1B\x21\x08'; // Double height
-    const totalLabel = `TOTAL ${transaction.type === 'buy' ? 'PAID:' : 'RECEIVED:'}`;
-    escpos += `${totalLabel}\n`;
-    escpos += `${formatCurrency(subtotal)}\n`;
-    escpos += '\x1B\x21\x00'; // Normal size
+    escpos += '--------------------------------\n';
     
-    escpos += '================================\n';
-    
-    // Footer
-    escpos += '\x1B\x61\x01'; // Center alignment
+    // Simple footer
     escpos += 'Thank you for your business!\n';
     escpos += `Status: ${transaction.status.toUpperCase()}\n`;
     escpos += `${new Date().toLocaleDateString('en-PH')} ${new Date().toLocaleTimeString('en-PH')}\n`;
     
-    // Cut paper and eject
-    escpos += '\x1B\x64\x03'; // Feed 3 lines
-    escpos += '\x1D\x56\x41'; // Cut paper
+    // Feed and cut
     
     return escpos;
-  };
-
-  const downloadESCPOSFile = () => {
-    const escposData = generateESCPOSCommands();
-    const blob = new Blob([escposData], { type: 'application/octet-stream' });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `receipt-${transaction.id.slice(-8)}.prn`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    URL.revokeObjectURL(url);
-    
-    alert('ESC/POS file downloaded! Send this file directly to your thermal printer.');
   };
 
   const exportReceiptAsImage = () => {
@@ -863,17 +867,13 @@ export default function TransactionDetails({
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start">
                     <DropdownMenuItem onClick={printThermalReceipt}>
-                      <Printer className="h-4 w-4 mr-2" />
+                      <PrinterIcon className="h-4 w-4 mr-2" />
                       Print HTML Receipt
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={exportReceiptAsImage}>
-                      <ImageIcon className="h-4 w-4 mr-2" />
-                      Download as High-Res Image
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={downloadESCPOSFile}>
                       <Download className="h-4 w-4 mr-2" />
-                      Download ESC/POS File
+                      Download ESC/POS Format
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
