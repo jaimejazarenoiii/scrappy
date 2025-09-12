@@ -733,51 +733,94 @@ export default function TransactionDetails({
     return storedTotal;
   };
 
-  const updateItem = (itemId: string, field: keyof EditableItem, value: string | number) => {
-    console.log('🔄 Updating item:', itemId, 'field:', field, 'value:', value);
-    
-    setEditedItems(prev => {
-      const updated = prev.map(item => {
-        if (item.id === itemId) {
-          const updatedItem = { ...item, [field]: value };
-          
-          // Recalculate total when quantity or price changes
-          if (field === 'weight' || field === 'pieces' || field === 'price') {
-            const quantity = updatedItem.weight || updatedItem.pieces || 0;
-            const price = updatedItem.price || 0;
-            const newTotal = quantity * price;
-            updatedItem.total = newTotal;
-            console.log(`📊 Recalculated total for ${item.name}: ${quantity} × ${price} = ${newTotal}`);
-          }
-          
-          return updatedItem;
-        }
-        return item;
-      });
-      
-      console.log('✅ Updated items state:', updated);
-      return updated;
-    });
+
+  const removeItem = (itemId: string) => {
+    setEditedItems(prev => prev.filter(item => item.id !== itemId));
+    // Trigger autosave after removing item
+    autoSaveProgress();
   };
 
   const addNewItem = () => {
     const newItem: EditableItem = {
       id: crypto.randomUUID(),
       name: '',
-      weight: transaction.type === 'buy' ? 1 : undefined,
-      pieces: transaction.type === 'sell' ? 1 : undefined,
+      weight: transaction.type === 'buy' ? 0 : undefined,
+      pieces: transaction.type === 'sell' ? 0 : undefined,
       price: 0,
-      total: 0
+      total: 0,
+      images: []
     };
-    setEditedItems([...editedItems, newItem]);
+    
+    setEditedItems(prev => [...prev, newItem]);
+    // Trigger autosave after adding item
+    autoSaveProgress();
   };
 
-  const removeItem = (itemId: string) => {
-    setEditedItems(prev => prev.filter(item => item.id !== itemId));
+  const updateItem = (itemId: string, field: keyof EditableItem, value: string | number) => {
+    setEditedItems(prev => prev.map(item => {
+      if (item.id === itemId) {
+        const updatedItem = { ...item, [field]: value };
+        
+        // Recalculate total when quantity or price changes
+        if (field === 'weight' || field === 'pieces' || field === 'price') {
+          const quantity = updatedItem.weight || updatedItem.pieces || 0;
+          const price = updatedItem.price || 0;
+          updatedItem.total = quantity * price;
+        }
+        
+        return updatedItem;
+      }
+      return item;
+    }));
+    // Trigger autosave after updating item
+    autoSaveProgress();
+  };
+
+  const autoSaveProgress = async () => {
+    try {
+      const updatedTransaction: Transaction = {
+        ...editedTransaction,
+        items: editedItems.map(item => ({
+          name: item.name,
+          weight: item.weight,
+          pieces: item.pieces,
+          price: item.price,
+          total: item.total,
+          images: item.images
+        })),
+        subtotal: calculateItemSubtotal(),
+        total: calculateTransactionTotal(),
+        timestamp: editedTransaction.timestamp
+      };
+
+      console.log('💾 Autosaving transaction progress:', {
+        editedItems: editedItems.length,
+        updatedTransaction: updatedTransaction
+      });
+
+      await onUpdate(updatedTransaction);
+      console.log('✅ Transaction autosaved successfully');
+    } catch (error) {
+      console.error('❌ Error autosaving transaction:', error);
+    }
   };
 
   const startEditing = () => {
     if (!readOnly) {
+      // Initialize edited items with current transaction data
+      setEditedItems(
+        transaction.items.map((item, index) => {
+          const quantity = item.weight || item.pieces || 0;
+          const calculatedTotal = (item.price || 0) * quantity;
+          const finalTotal = item.total || calculatedTotal;
+          
+          return {
+            id: `item-${index}`,
+            ...item,
+            total: finalTotal
+          };
+        })
+      );
       setIsEditing(true);
     }
   };
