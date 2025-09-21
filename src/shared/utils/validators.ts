@@ -16,7 +16,7 @@ export const validateTransactionType = (type: string): boolean => {
 };
 
 export const validateCustomerType = (type: string): boolean => {
-  return ['person', 'company', 'government'].includes(type);
+  return ['individual', 'business', 'government'].includes(type);
 };
 
 export const validateTransactionStatus = (status: string): boolean => {

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import BusinessSwitcher from './BusinessSwitcher';
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -119,6 +120,9 @@ export default function UserHeader() {
             </h1>
             <p className="text-sm text-gray-600 font-medium">Junkshop Management System</p>
           </div>
+          
+          {/* Business Switcher */}
+          <BusinessSwitcher />
         </div>
 
                     <div className="flex items-center space-x-4">

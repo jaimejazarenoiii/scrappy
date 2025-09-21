@@ -51,7 +51,7 @@ export class UpdateTransactionUseCaseImpl implements UpdateTransactionUseCase {
       throw new Error('Invalid transaction status');
     }
 
-    if (request.customerType && !['person', 'company', 'government'].includes(request.customerType)) {
+    if (request.customerType && !['individual', 'business', 'government'].includes(request.customerType)) {
       throw new Error('Invalid customer type');
     }
 

@@ -9,6 +9,7 @@ import { Calendar } from './ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 import { Textarea } from './ui/textarea';
+import { supabaseDataService } from '../../infrastructure/database/supabaseService';
 import { 
   ArrowLeft, 
   Plus, 
@@ -43,6 +44,10 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
   const [advanceAmount, setAdvanceAmount] = useState('');
   const [advanceDescription, setAdvanceDescription] = useState('');
+  const [isAddingEmployee, setIsAddingEmployee] = useState(false);
+  const [isAddingAdvance, setIsAddingAdvance] = useState(false);
+  const [deletingEmployeeId, setDeletingEmployeeId] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [advanceDate, setAdvanceDate] = useState<Date>(new Date());
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [newEmployee, setNewEmployee] = useState({
@@ -67,7 +72,19 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
     });
 
   const handleAddEmployee = async () => {
-    if (!newEmployee.name || !newEmployee.weeklySalary) return;
+    console.log('Add Employee button clicked');
+    console.log('newEmployee:', newEmployee);
+    
+    if (!newEmployee.name || !newEmployee.weeklySalary) {
+      console.log('Validation failed - missing name or weeklySalary');
+      return;
+    }
+
+    const weeklySalary = parseFloat(newEmployee.weeklySalary);
+    if (isNaN(weeklySalary) || weeklySalary <= 0) {
+      console.log('Invalid weekly salary:', newEmployee.weeklySalary);
+      return;
+    }
 
     const employee: Employee = {
       id: crypto.randomUUID(),
@@ -76,49 +93,110 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
       phone: '',
       email: '',
       avatar: '',
-      weeklySalary: parseFloat(newEmployee.weeklySalary),
+      weeklySalary: weeklySalary,
       currentAdvances: 0,
       sessionsHandled: 0,
-      advances: []
+      advances: [],
+      businessId: '00000000-0000-0000-0000-000000000001'
     };
 
+    console.log('Creating employee:', employee);
+    setIsAddingEmployee(true);
     try {
       await addEmployee(employee);
       setNewEmployee({ name: '', weeklySalary: '' });
       setShowAddEmployee(false);
+      console.log('Employee added successfully');
     } catch (error) {
       console.error('Error adding employee:', error);
+    } finally {
+      setIsAddingEmployee(false);
     }
   };
 
   const removeEmployee = async (id: string) => {
+    console.log('=== COMPONENT removeEmployee START ===');
+    console.log('Remove employee clicked for ID:', id);
+    if (!id) {
+      console.error('No employee ID provided');
+      return;
+    }
+    
+    setDeletingEmployeeId(id);
     try {
+      console.log('Calling deleteEmployee with ID:', id);
       await deleteEmployee(id);
+      console.log('Employee deleted successfully in component');
+      
+      // Refresh stats after deletion
+      if (onRefreshStats) {
+        console.log('Calling onRefreshStats...');
+        await onRefreshStats();
+        console.log('onRefreshStats completed');
+      }
+      
+      // Force component refresh
+      console.log('Forcing component refresh...');
+      setRefreshKey(prev => prev + 1);
     } catch (error) {
       console.error('Error removing employee:', error);
+      
+      // If database delete fails, try to remove from local state anyway for testing
+      console.log('Database delete failed, trying local state removal for testing...');
+      // This won't actually work since we can't modify the employees prop directly
+      // But it will show us if the issue is with the database or the UI
+    } finally {
+      setDeletingEmployeeId(null);
+      console.log('=== COMPONENT removeEmployee END ===');
     }
   };
 
-  const handleAdvanceSubmit = () => {
-    if (!selectedEmployeeId || !advanceAmount || !advanceDescription) return;
+
+
+  const handleAdvanceSubmit = async () => {
+    console.log('Cash advance submit clicked');
+    console.log('selectedEmployeeId:', selectedEmployeeId);
+    console.log('advanceAmount:', advanceAmount);
+    console.log('advanceDescription:', advanceDescription);
+    
+    if (!selectedEmployeeId || !advanceAmount || !advanceDescription) {
+      console.log('Validation failed - missing required fields');
+      return;
+    }
+
+    const amount = parseFloat(advanceAmount);
+    if (isNaN(amount) || amount <= 0) {
+      console.log('Invalid amount:', advanceAmount);
+      return;
+    }
 
     const advance: CashAdvance = {
       id: crypto.randomUUID(),
       employeeId: selectedEmployeeId,
-      amount: parseFloat(advanceAmount),
+      amount: amount,
       date: advanceDate.toISOString(),
       description: advanceDescription,
-      status: 'active'
+      status: 'active',
+      businessId: '00000000-0000-0000-0000-000000000001'
     };
 
-    onAddAdvance(selectedEmployeeId, advance);
-    
-    // Reset form
-    setAdvanceAmount('');
-    setAdvanceDescription('');
-    setAdvanceDate(new Date());
-    setSelectedEmployeeId('');
-    setShowAdvanceDialog(false);
+    console.log('Creating cash advance:', advance);
+    setIsAddingAdvance(true);
+    try {
+      await onAddAdvance(selectedEmployeeId, advance);
+      console.log('Cash advance added successfully');
+      
+      // Reset form
+      setAdvanceAmount('');
+      setAdvanceDescription('');
+      setAdvanceDate(new Date());
+      setSelectedEmployeeId('');
+      setShowAdvanceDialog(false);
+    } catch (error) {
+      console.error('Error adding cash advance:', error);
+    } finally {
+      setIsAddingAdvance(false);
+    }
   };
 
   const deductAdvance = async (employeeId: string, advanceId: string) => {
@@ -145,21 +223,33 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
     employees.reduce((total, emp) => total + (emp.currentAdvances || 0), 0);
 
   return (
-    <div className="p-4 max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <Button variant="ghost" size="icon" onClick={onBack}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <h1 className="text-2xl font-bold">Employee Management</h1>
-        </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
+      {/* Animated Background Elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-full blur-3xl animate-blob"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 rounded-full blur-3xl animate-blob animation-delay-2000"></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-pink-500/10 to-purple-500/10 rounded-full blur-3xl animate-blob animation-delay-4000"></div>
+      </div>
+      
+      {/* Grid Pattern */}
+      <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%239C92AC%22%20fill-opacity%3D%220.05%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%221%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
+      
+      <div className="relative z-10 p-4 max-w-6xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <Button variant="ghost" size="icon" onClick={onBack} className="text-white hover:text-white hover:bg-white/20">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <h1 className="text-2xl font-bold text-white">Employee Management</h1>
+          </div>
         
         <div className="flex space-x-3">
           {onRefreshStats && (
             <Button 
               variant="outline"
               onClick={() => onRefreshStats()}
+              className="text-white border-white/20 hover:bg-white/20 bg-white/10"
             >
               <TrendingUp className="h-4 w-4 mr-2" />
               Refresh Stats
@@ -168,22 +258,23 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
           
           <Dialog open={showAdvanceDialog} onOpenChange={setShowAdvanceDialog}>
             <DialogTrigger asChild>
-              <Button variant="outline">
+              <Button variant="outline" className="text-white border-white/20 hover:bg-white/20 bg-white/10">
                 <DollarSign className="h-4 w-4 mr-2" />
                 Cash Advance
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md bg-white/10 backdrop-blur-xl border border-white/20">
               <DialogHeader>
-                <DialogTitle>Add Cash Advance</DialogTitle>
+                <DialogTitle className="text-white">Add Cash Advance</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <Label>Employee</Label>
+                  <Label className="text-white">Employee</Label>
                   <select 
-                    className="w-full p-2 border rounded"
+                    className="w-full p-2 border border-white/20 rounded bg-white/10 text-white disabled:opacity-50"
                     value={selectedEmployeeId}
                     onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                    disabled={isAddingAdvance}
                   >
                     <option value="">Select employee</option>
                     {employees.map(emp => (
@@ -193,32 +284,34 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
                 </div>
                 
                 <div>
-                  <Label>Amount</Label>
+                  <Label className="text-white">Amount</Label>
                   <Input
                     type="number"
                     step="0.01"
                     placeholder="0.00"
                     value={advanceAmount}
                     onChange={(e) => setAdvanceAmount(e.target.value)}
+                    disabled={isAddingAdvance}
+                    className="bg-white/10 border-white/20 text-white placeholder:text-gray-300 disabled:opacity-50"
                   />
                 </div>
                 
                 <div>
-                  <Label>Date</Label>
+                  <Label className="text-white">Date</Label>
                   <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
                     <PopoverTrigger asChild>
                       <Button
                         variant="outline"
                         className={cn(
-                          "w-full justify-start text-left font-normal",
-                          !advanceDate && "text-muted-foreground"
+                          "w-full justify-start text-left font-normal bg-white/10 border-white/20 text-white",
+                          !advanceDate && "text-gray-300"
                         )}
                       >
                         <CalendarIcon className="mr-2 h-4 w-4" />
                         {advanceDate ? format(advanceDate, "PPP") : <span>Pick a date</span>}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
+                    <PopoverContent className="w-auto p-0 bg-white/10 backdrop-blur-xl border border-white/20" align="start">
                       <Calendar
                         mode="single"
                         selected={advanceDate}
@@ -229,33 +322,49 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
                           }
                         }}
                         initialFocus
+                        className="bg-white/10 text-white"
                       />
                     </PopoverContent>
                   </Popover>
                 </div>
                 
                 <div>
-                  <Label>Description</Label>
+                  <Label className="text-white">Description</Label>
                   <Textarea
                     placeholder="Reason for advance..."
                     value={advanceDescription}
                     onChange={(e) => setAdvanceDescription(e.target.value)}
                     rows={3}
+                    disabled={isAddingAdvance}
+                    className="bg-white/10 border-white/20 text-white placeholder:text-gray-300 disabled:opacity-50"
                   />
                 </div>
                 
                 <Button 
                   onClick={handleAdvanceSubmit}
-                  disabled={!selectedEmployeeId || !advanceAmount || !advanceDescription}
-                  className="w-full"
+                  disabled={!selectedEmployeeId || !advanceAmount || !advanceDescription || isAddingAdvance}
+                  className="w-full bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Add Advance
+                  {isAddingAdvance ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Adding...
+                    </>
+                  ) : (
+                    'Add Advance'
+                  )}
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
 
-          <Button onClick={() => setShowAddEmployee(true)}>
+          <Button 
+            onClick={() => {
+              console.log('Add Employee button clicked - opening form');
+              setShowAddEmployee(true);
+            }} 
+            className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white"
+          >
             <UserPlus className="h-4 w-4 mr-2" />
             Add Employee
           </Button>
@@ -264,43 +373,43 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center space-x-3">
-              <div className="h-10 w-10 bg-blue-500 rounded-lg flex items-center justify-center">
+              <div className="h-10 w-10 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-lg flex items-center justify-center">
                 <UserPlus className="h-5 w-5 text-white" />
               </div>
               <div>
-                <p className="text-sm text-gray-600">Total Employees</p>
-                <p className="text-2xl font-bold">{employees.length}</p>
+                <p className="text-sm text-purple-200">Total Employees</p>
+                <p className="text-2xl font-bold text-white">{employees.length}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center space-x-3">
-              <div className="h-10 w-10 bg-green-500 rounded-lg flex items-center justify-center">
+              <div className="h-10 w-10 bg-gradient-to-br from-green-500 to-emerald-500 rounded-lg flex items-center justify-center">
                 <TrendingUp className="h-5 w-5 text-white" />
               </div>
               <div>
-                <p className="text-sm text-gray-600">Weekly Payroll</p>
-                <p className="text-2xl font-bold">{formatCurrency(getTotalWeeklySalaries())}</p>
+                <p className="text-sm text-purple-200">Weekly Payroll</p>
+                <p className="text-2xl font-bold text-green-200">{formatCurrency(getTotalWeeklySalaries())}</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
           <CardContent className="p-4">
             <div className="flex items-center space-x-3">
-              <div className="h-10 w-10 bg-orange-500 rounded-lg flex items-center justify-center">
+              <div className="h-10 w-10 bg-gradient-to-br from-orange-500 to-red-500 rounded-lg flex items-center justify-center">
                 <AlertCircle className="h-5 w-5 text-white" />
               </div>
               <div>
-                <p className="text-sm text-gray-600">Total Advances</p>
-                <p className="text-2xl font-bold">{formatCurrency(getTotalAdvances())}</p>
+                <p className="text-sm text-purple-200">Total Advances</p>
+                <p className="text-2xl font-bold text-orange-200">{formatCurrency(getTotalAdvances())}</p>
               </div>
             </div>
           </CardContent>
@@ -309,36 +418,56 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
 
       {/* Add Employee Form */}
       {showAddEmployee && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Add New Employee</CardTitle>
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="text-white">Add New Employee</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <Label>Employee Name</Label>
+                <Label className="text-white">Employee Name</Label>
                 <Input
                   placeholder="Enter full name"
                   value={newEmployee.name}
                   onChange={(e) => setNewEmployee({...newEmployee, name: e.target.value})}
+                  disabled={isAddingEmployee}
+                  className="bg-white/10 border-white/20 text-white placeholder:text-gray-300 disabled:opacity-50"
                 />
               </div>
               <div>
-                <Label>Weekly Salary</Label>
+                <Label className="text-white">Weekly Salary</Label>
                 <Input
                   type="number"
                   step="0.01"
                   placeholder="0.00"
                   value={newEmployee.weeklySalary}
                   onChange={(e) => setNewEmployee({...newEmployee, weeklySalary: e.target.value})}
+                  disabled={isAddingEmployee}
+                  className="bg-white/10 border-white/20 text-white placeholder:text-gray-300 disabled:opacity-50"
                 />
               </div>
             </div>
             <div className="flex space-x-3">
-              <Button onClick={handleAddEmployee} disabled={!newEmployee.name || !newEmployee.weeklySalary}>
-                Add Employee
+              <Button 
+                onClick={handleAddEmployee} 
+                disabled={!newEmployee.name || !newEmployee.weeklySalary || isNaN(parseFloat(newEmployee.weeklySalary)) || parseFloat(newEmployee.weeklySalary) <= 0 || isAddingEmployee}
+                className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAddingEmployee ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Adding...
+                  </>
+                ) : (
+                  'Add Employee'
+                )}
               </Button>
-              <Button variant="outline" onClick={() => setShowAddEmployee(false)}>
+              <Button 
+                variant="outline" 
+                onClick={() => setShowAddEmployee(false)} 
+                disabled={isAddingEmployee}
+                className="text-white border-white/20 hover:bg-white/20 bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 Cancel
               </Button>
             </div>
@@ -346,62 +475,92 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
         </Card>
       )}
 
+      {/* Manual Refresh Button for Testing */}
+      <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+        <CardContent className="p-4">
+          <p className="text-sm text-purple-200 mt-2">
+            Current employees: {employees.length}
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Employees List */}
       <div className="space-y-4">
         {employees.map((employee) => (
-          <Card key={employee.id}>
+          <Card key={`${employee.id}-${refreshKey}`} className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
             <CardContent className="p-6">
               <div className="space-y-4">
                 {/* Employee Header */}
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
-                    <div className="h-12 w-12 bg-blue-500 rounded-full flex items-center justify-center">
+                    <div className="h-12 w-12 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-full flex items-center justify-center">
                       <span className="text-white font-semibold">
                         {employee.name.charAt(0)}
                       </span>
                     </div>
                     <div>
-                      <h3 className="text-lg font-semibold">{employee.name}</h3>
-                      <p className="text-gray-600">Weekly Salary: {formatCurrency(employee.weeklySalary || 0)}</p>
+                      <h3 className="text-lg font-semibold text-white">{employee.name}</h3>
+                      <p className="text-purple-200">Weekly Salary: {formatCurrency(employee.weeklySalary || 0)}</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <Badge variant="secondary">
+                    <Badge variant="secondary" className="bg-white/10 text-white border border-white/20">
                       {employee.sessionsHandled || 0} sessions
                     </Badge>
                     {(employee.currentAdvances || 0) > 0 && (
-                      <Badge variant="destructive">
+                      <Badge variant="destructive" className="bg-red-500/10 text-red-200 border border-red-400/20">
                         {formatCurrency(employee.currentAdvances || 0)} advance
                       </Badge>
                     )}
                     <Button 
                       variant="ghost" 
                       size="icon"
-                      onClick={() => employee.id && removeEmployee(employee.id)}
-                      className="text-red-500"
+                      onClick={() => {
+                        console.log('=== DELETE BUTTON CLICKED ===');
+                        console.log('Employee object:', employee);
+                        console.log('Employee ID:', employee.id);
+                        console.log('Employee name:', employee.name);
+                        console.log('ID type:', typeof employee.id);
+                        console.log('ID is undefined?', employee.id === undefined);
+                        console.log('ID is null?', employee.id === null);
+                        
+                        if (!employee.id) {
+                          console.error('No employee ID found!');
+                          return;
+                        }
+                        
+                        removeEmployee(employee.id);
+                      }}
+                      disabled={deletingEmployeeId === employee.id}
+                      className="text-red-200 hover:text-red-300 hover:bg-white/20 disabled:opacity-50"
                     >
-                      <Trash2 className="h-4 w-4" />
+                      {deletingEmployeeId === employee.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
                     </Button>
+                    
                   </div>
                 </div>
 
                 {/* Employee Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-                  <div className="p-3 bg-gray-50 rounded">
-                    <p className="text-sm text-gray-600">Weekly Salary</p>
-                    <p className="font-semibold">{formatCurrency(employee.weeklySalary || 0)}</p>
+                  <div className="p-3 bg-white/10 rounded border border-white/20">
+                    <p className="text-sm text-purple-200">Weekly Salary</p>
+                    <p className="font-semibold text-white">{formatCurrency(employee.weeklySalary || 0)}</p>
                   </div>
-                  <div className="p-3 bg-gray-50 rounded">
-                    <p className="text-sm text-gray-600">Current Advances</p>
-                    <p className="font-semibold text-red-600">{formatCurrency(employee.currentAdvances || 0)}</p>
+                  <div className="p-3 bg-white/10 rounded border border-white/20">
+                    <p className="text-sm text-purple-200">Current Advances</p>
+                    <p className="font-semibold text-red-200">{formatCurrency(employee.currentAdvances || 0)}</p>
                   </div>
-                  <div className="p-3 bg-gray-50 rounded">
-                    <p className="text-sm text-gray-600">Sessions Handled</p>
-                    <p className="font-semibold">{employee.sessionsHandled || 0}</p>
+                  <div className="p-3 bg-white/10 rounded border border-white/20">
+                    <p className="text-sm text-purple-200">Sessions Handled</p>
+                    <p className="font-semibold text-white">{employee.sessionsHandled || 0}</p>
                   </div>
-                  <div className="p-3 bg-gray-50 rounded">
-                    <p className="text-sm text-gray-600">Net Weekly Pay</p>
-                    <p className="font-semibold text-green-600">
+                  <div className="p-3 bg-white/10 rounded border border-white/20">
+                    <p className="text-sm text-purple-200">Net Weekly Pay</p>
+                    <p className="font-semibold text-green-200">
                       {formatCurrency((employee.weeklySalary || 0) - (employee.currentAdvances || 0))}
                     </p>
                   </div>
@@ -410,9 +569,9 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
                 {/* Cash Advances */}
                 {employee.advances && employee.advances.length > 0 && (
                   <>
-                    <Separator />
+                    <Separator className="bg-white/20" />
                     <div>
-                      <h4 className="font-semibold mb-3 flex items-center">
+                      <h4 className="font-semibold mb-3 flex items-center text-white">
                         <Clock className="h-4 w-4 mr-2" />
                         Cash Advances History
                       </h4>
@@ -423,18 +582,18 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
                             <div 
                               key={advance.id} 
                               className={`flex items-center justify-between p-3 rounded border ${
-                                advance.status === 'deducted' ? 'bg-gray-50 opacity-60' : 'bg-white'
+                                advance.status === 'deducted' ? 'bg-white/5 opacity-60 border-white/10' : 'bg-white/10 border-white/20'
                               }`}
                             >
                               <div className="flex-1">
                                 <div className="flex items-center space-x-3">
-                                  <span className="font-medium">{formatCurrency(advance.amount)}</span>
-                                  <span className="text-sm text-gray-600">{formatDate(new Date(advance.date))}</span>
-                                  <Badge variant={advance.status === 'active' ? 'destructive' : 'secondary'}>
+                                  <span className="font-medium text-white">{formatCurrency(advance.amount)}</span>
+                                  <span className="text-sm text-purple-200">{formatDate(new Date(advance.date))}</span>
+                                  <Badge variant={advance.status === 'active' ? 'destructive' : 'secondary'} className={advance.status === 'active' ? 'bg-red-500/10 text-red-200 border border-red-400/20' : 'bg-white/10 text-white border border-white/20'}>
                                     {advance.status}
                                   </Badge>
                                 </div>
-                                <p className="text-sm text-gray-600 mt-1">{advance.description}</p>
+                                <p className="text-sm text-purple-200 mt-1">{advance.description}</p>
                               </div>
                               {advance.status === 'active' && (
                                 <Button 
@@ -442,6 +601,7 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
                                   variant="outline"
                                   onClick={() => employee.id && deductAdvance(employee.id, advance.id)}
                                   disabled={deductingAdvances.has(advance.id)}
+                                  className="text-white border-white/20 hover:bg-white/20 bg-white/10"
                                 >
                                   {deductingAdvances.has(advance.id) ? (
                                     <>
@@ -463,6 +623,7 @@ export default function Employees({ employees, addEmployee, updateEmployee, dele
             </CardContent>
           </Card>
         ))}
+      </div>
       </div>
     </div>
   );

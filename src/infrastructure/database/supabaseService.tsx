@@ -1,18 +1,23 @@
 import { createClient } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '../../shared/utils/supabase/info';
-import { ImageUploadService } from '../services/ImageUploadService';
+import { ImageUploadService } from '../../infrastructure/services/ImageUploadService';
 
 // Initialize Supabase client
 const supabaseUrl = `https://${projectId}.supabase.co`;
 const supabase = createClient(supabaseUrl, publicAnonKey);
 
+// Save deduplication cache to prevent rapid duplicate saves
+const saveCache = new Map<string, Promise<void>>();
+const SAVE_CACHE_TTL = 5000; // 5 seconds
+
 // Re-export interfaces with Supabase-compatible types
 export interface Transaction {
   id: string;
   type: 'buy' | 'sell';
+  businessId: string; // Multi-tenant support
   // Frontend fields (camelCase) - these are what components should use
   customerName?: string;
-  customerType: 'person' | 'company' | 'government' | 'individual' | 'business';
+  customerType: 'individual' | 'business' | 'government';
   completedAt?: string;
   isDelivery?: boolean;
   isPickup?: boolean;
@@ -52,6 +57,7 @@ export interface Transaction {
 export interface TransactionItem {
   id?: string;
   transaction_id?: string;
+  businessId: string; // Multi-tenant support
   name: string;
   weight?: number;
   pieces?: number;
@@ -62,6 +68,7 @@ export interface TransactionItem {
 
 export interface CashAdvance {
   id: string;
+  businessId: string; // Multi-tenant support
   // Frontend fields (camelCase) - these are what components should use
   employeeId?: string;
   amount: number;
@@ -72,7 +79,8 @@ export interface CashAdvance {
 
 export interface CashEntry {
   id?: string;
-  type: 'opening' | 'transaction' | 'expense' | 'adjustment';
+  businessId: string; // Multi-tenant support
+  type: 'opening' | 'transaction' | 'expense' | 'adjustment' | 'sell' | 'buy';
   amount: number;
   description: string;
   timestamp: string;
@@ -84,7 +92,8 @@ export interface CashEntry {
 }
 
 export interface Employee {
-  id?: string;
+  id: string;
+  businessId: string; // Multi-tenant support
   name: string;
   role: string;
   phone: string;
@@ -102,6 +111,7 @@ export interface Employee {
 
 export interface Profile {
   id: string;
+  businessId: string; // Multi-tenant support
   name: string;
   role: 'owner' | 'employee';
   phone?: string;
@@ -149,6 +159,7 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     createdAt,
     updatedAt,
     items,
+    businessId, // Extract businessId for conversion
     // Additional fields to exclude from ...rest
     customerInfo,
     deliveryAddress,
@@ -167,13 +178,9 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     ...rest // Any remaining fields
   } = transaction as any;
 
-  // Map frontend customer types to database values
+  // No mapping needed - frontend and database use the same values now
+  // individual, business, government
   let dbCustomerType = customerType;
-  if (customerType === 'person') {
-    dbCustomerType = 'individual';
-  } else if (customerType === 'company' || customerType === 'government') {
-    dbCustomerType = 'business';
-  }
 
   // Map sessionType to boolean fields
   let dbIsDelivery = isDelivery;
@@ -204,6 +211,7 @@ function convertTransactionToDb(transaction: Partial<Transaction>): any {
     created_by: createdBy,
     created_by_name: createdByName,
     created_by_role: createdByRole,
+    business_id: businessId, // Convert camelCase to snake_case
     // Add any remaining fields (excluding the destructured snake_case ones)
     ...rest
   };
@@ -223,11 +231,14 @@ function convertTransactionFromDb(dbTransaction: any): Transaction {
     created_at,
     updated_at,
     transaction_items,
+    business_id, // Extract business_id for conversion
     ...rest
   } = dbTransaction;
 
   console.log('🔄 Converting transaction from DB:', {
     id: dbTransaction.id,
+    customer_type: customer_type,
+    customer_name: customer_name,
     sessionImages: session_images,
     sessionImagesType: typeof session_images,
     sessionImagesLength: session_images?.length,
@@ -237,10 +248,24 @@ function convertTransactionFromDb(dbTransaction: any): Transaction {
   // Map database customer types back to frontend values
   let frontendCustomerType = customer_type;
   if (customer_type === 'individual') {
-    frontendCustomerType = 'person';
+    frontendCustomerType = 'individual'; // Keep as 'individual' since that's what the UI should show
   } else if (customer_type === 'business') {
-    frontendCustomerType = 'company';
+    frontendCustomerType = 'business'; // Keep as 'business' since that's what the UI should show
+  } else if (customer_type === 'government') {
+    frontendCustomerType = 'government'; // Keep as 'government'
+  } else if (!customer_type || customer_type === null || customer_type === undefined) {
+    // Handle undefined/null customer types by defaulting to 'individual'
+    frontendCustomerType = 'individual';
   }
+  
+  console.log('🔄 Customer type mapping:', {
+    originalCustomerType: customer_type,
+    originalCustomerTypeType: typeof customer_type,
+    originalCustomerTypeIsNull: customer_type === null,
+    originalCustomerTypeIsUndefined: customer_type === undefined,
+    mappedCustomerType: frontendCustomerType,
+    mappedCustomerTypeType: typeof frontendCustomerType
+  });
 
   // Map boolean fields back to sessionType
   let sessionType: 'in-shop' | 'pickup' | 'delivery' | undefined;
@@ -251,6 +276,18 @@ function convertTransactionFromDb(dbTransaction: any): Transaction {
   } else {
     sessionType = 'in-shop'; // Default for buy transactions
   }
+
+  // Convert transaction items from snake_case to camelCase
+  const convertedItems = (transaction_items || []).map((item: any) => ({
+    id: item.id,
+    name: item.name,
+    weight: item.weight,
+    pieces: item.pieces,
+    price: item.price,
+    total: item.total,
+    images: item.images,
+    businessId: item.business_id // Convert snake_case to camelCase
+  }));
 
   const convertedTransaction = {
     ...rest,
@@ -266,11 +303,14 @@ function convertTransactionFromDb(dbTransaction: any): Transaction {
     createdByRole: created_by_role,
     createdAt: created_at,
     updatedAt: updated_at,
-    items: transaction_items || []
+    businessId: business_id, // Convert snake_case to camelCase
+    items: convertedItems
   };
 
   console.log('✅ Final converted transaction:', {
     id: convertedTransaction.id,
+    customerType: convertedTransaction.customerType,
+    customerName: convertedTransaction.customerName,
     sessionImages: convertedTransaction.sessionImages,
     sessionImagesType: typeof convertedTransaction.sessionImages,
     sessionImagesLength: convertedTransaction.sessionImages?.length
@@ -288,6 +328,7 @@ function convertEmployeeToDb(employee: Employee): any {
     createdAt,
     updatedAt,
     advances,
+    businessId, // Extract businessId for conversion
     // Extract core fields explicitly
     id,
     name,
@@ -311,6 +352,7 @@ function convertEmployeeToDb(employee: Employee): any {
     current_advances: currentAdvances,
     sessions_handled: sessionsHandled,
     created_by: createdBy,
+    business_id: businessId, // Convert camelCase to snake_case
     // Any remaining fields (excluding the destructured snake_case ones)
     ...rest
   };
@@ -325,6 +367,7 @@ function convertEmployeeFromDb(dbEmployee: any): Employee {
     created_at,
     updated_at,
     cash_advances,
+    business_id, // Extract business_id for conversion
     ...rest
   } = dbEmployee;
 
@@ -336,6 +379,7 @@ function convertEmployeeFromDb(dbEmployee: any): Employee {
     createdBy: created_by,
     createdAt: created_at,
     updatedAt: updated_at,
+    businessId: business_id, // Convert snake_case to camelCase
     advances: cash_advances ? cash_advances.map(convertCashAdvanceFromDb) : []
   };
 }
@@ -343,6 +387,7 @@ function convertEmployeeFromDb(dbEmployee: any): Employee {
 function convertCashAdvanceToDb(advance: CashAdvance): any {
   const {
     employeeId,
+    businessId,
     // Extract core fields explicitly
     id,
     amount,
@@ -361,6 +406,7 @@ function convertCashAdvanceToDb(advance: CashAdvance): any {
     status,
     // Converted fields
     employee_id: employeeId,
+    business_id: businessId,
     // Any remaining fields (excluding the destructured snake_case ones)
     ...rest
   };
@@ -369,12 +415,14 @@ function convertCashAdvanceToDb(advance: CashAdvance): any {
 function convertCashAdvanceFromDb(dbAdvance: any): CashAdvance {
   const {
     employee_id,
+    business_id,
     ...rest
   } = dbAdvance;
 
   return {
     ...rest,
-    employeeId: employee_id
+    employeeId: employee_id,
+    businessId: business_id
   };
 }
 
@@ -521,7 +569,7 @@ class SupabaseDataService {
       
       let query = supabase
         .from('transactions')
-        .select('id, type, customer_name, employee, status, total, subtotal, expenses, timestamp, created_at, session_images, transaction_items (*)')
+        .select('id, type, customer_name, customer_type, employee, status, total, subtotal, expenses, timestamp, created_at, session_images, transaction_items (*)')
         .order('timestamp', { ascending: false })
         .limit(includeItemsLimit);
 
@@ -574,6 +622,9 @@ class SupabaseDataService {
         id: data.id,
         type: data.type,
         status: data.status,
+        customerName: data.customer_name,
+        customerType: data.customer_type,
+        customerTypeType: typeof data.customer_type,
         itemsCount: data.transaction_items?.length || 0,
         sessionImages: data.session_images,
         sessionImagesType: typeof data.session_images,
@@ -615,31 +666,74 @@ class SupabaseDataService {
   }
 
   async saveTransaction(transaction: Transaction): Promise<void> {
+    // Create a cache key for this transaction save
+    const cacheKey = `save_${transaction.id}`;
+    
+    // Check if there's already a save in progress for this transaction
+    if (saveCache.has(cacheKey)) {
+      console.log('Save already in progress for transaction:', transaction.id, 'waiting for completion...');
+      return saveCache.get(cacheKey)!;
+    }
+    
+    // Create the save promise and cache it
+    const savePromise = this._performSaveTransaction(transaction);
+    saveCache.set(cacheKey, savePromise);
+    
+    try {
+      await savePromise;
+    } finally {
+      // Clean up cache after completion
+      saveCache.delete(cacheKey);
+    }
+  }
+
+  private async _performSaveTransaction(transaction: Transaction): Promise<void> {
     try {
       const { items, sessionImages, ...transactionData } = transaction;
       
       console.log('saveTransaction called with:', {
         transactionId: transaction.id,
         transactionType: transaction.type,
+        customerType: transaction.customerType,
+        customerName: transaction.customerName,
         itemsCount: items?.length || 0,
         sessionImagesCount: sessionImages?.length || 0,
         items: items
       });
       
-      // Upload session images to Supabase Storage if they exist
+      // Handle session images - only upload if they are base64 data, not URLs
       let sessionImageUrls: string[] = [];
       if (sessionImages && sessionImages.length > 0) {
-        console.log('Uploading session images to Supabase Storage...');
-        try {
-          const uploadResults = await ImageUploadService.uploadMultipleImages(
-            sessionImages, 
-            'transaction-images'
-          );
-          sessionImageUrls = uploadResults.map(result => result.publicUrl);
-          console.log('Session images uploaded successfully:', sessionImageUrls);
-        } catch (uploadError) {
-          console.error('Failed to upload session images:', uploadError);
-          // Continue without images rather than failing the entire transaction
+        // Check if images are already URLs (already uploaded) or base64 data (need upload)
+        const needsUpload = sessionImages.some(img => 
+          img.startsWith('data:image/') || img.includes('base64')
+        );
+        
+        if (needsUpload) {
+          console.log('Uploading session images to Supabase Storage...');
+          try {
+            // Upload session images one by one to avoid Promise.all failures
+            const uploadPromises = sessionImages.map(async (base64, index) => {
+              try {
+                const result = await ImageUploadService.uploadBase64Image(base64, 'transaction-images', `session-${transaction.id}-${index + 1}`);
+                return result.publicUrl;
+              } catch (uploadError) {
+                console.error(`Failed to upload session image ${index + 1}:`, uploadError);
+                return null; // Return null for failed uploads
+              }
+            });
+            
+            const uploadResults = await Promise.all(uploadPromises);
+            sessionImageUrls = uploadResults.filter(url => url !== null); // Filter out failed uploads
+            console.log('Session images uploaded successfully:', sessionImageUrls);
+          } catch (uploadError) {
+            console.error('Failed to upload session images:', uploadError);
+            // Continue without images rather than failing the entire transaction
+          }
+        } else {
+          // Images are already URLs, use them directly
+          console.log('Session images are already URLs, using them directly:', sessionImages);
+          sessionImageUrls = sessionImages;
         }
       }
       
@@ -662,9 +756,22 @@ class SupabaseDataService {
         }
       }
       
+      // Ensure customer_type has a valid default value if missing
+      if (!dbTransaction.customer_type) {
+        dbTransaction.customer_type = 'individual'; // Default to 'individual' if not specified
+      }
+      
+      // No mapping needed - frontend and database use the same values now
+      // individual, business, government
+      
+      console.log('🔄 Customer type in saveTransaction:', {
+        originalCustomerType: transaction.customerType,
+        finalCustomerType: dbTransaction.customer_type
+      });
+      
       // Validate customer_type for database constraint
-      if (!dbTransaction.customer_type || !['individual', 'business'].includes(dbTransaction.customer_type)) {
-        throw new Error(`Invalid customer_type: ${dbTransaction.customer_type}. Must be 'individual' or 'business'`);
+      if (!['individual', 'business', 'government'].includes(dbTransaction.customer_type)) {
+        throw new Error(`Invalid customer_type: ${dbTransaction.customer_type}. Must be 'individual', 'business', or 'government'`);
       }
       
       // For new transactions (first save), always INSERT
@@ -721,13 +828,20 @@ class SupabaseDataService {
         itemsExists: !!items, 
         itemsLength: items?.length || 0, 
         items: items,
-        transactionItems: transaction.items // Check if items exist on original transaction
+        transactionItems: transaction.items, // Check if items exist on original transaction
+        transactionId: transaction.id,
+        transactionType: transaction.type,
+        transactionStatus: transaction.status
       });
+      
+      // Only save items if there are items to save AND this is not just a draft
+      // Draft transactions with status 'in-progress' and no items should not save items
+      const isDraftWithNoItems = transaction.status === 'in-progress' && (!items || items.length === 0);
       
       if (items && items.length > 0) {
         console.log('Deleting existing items for transaction:', transaction.id);
         
-        // Delete existing items first
+        // Delete existing items first - always do this to prevent conflicts
         const { error: deleteError } = await supabase
           .from('transaction_items')
           .delete()
@@ -735,48 +849,135 @@ class SupabaseDataService {
           
         if (deleteError) {
           console.error('Error deleting existing items:', deleteError);
-          throw deleteError;
+          // Don't throw here, continue with insert as items might not exist
+          console.log('Continuing with insert despite delete error...');
+        } else {
+          console.log('Successfully deleted existing items');
         }
 
-        // Process items and upload item images
-        const processedItems = await Promise.all(items.map(async (item) => {
+        // Process items and handle item images with better error handling
+        const processedItems = await Promise.allSettled(items.map(async (item) => {
           let itemImageUrls: string[] = [];
           
-          // Upload item images if they exist
+          // Handle item images - only upload if they are base64 data, not URLs
           if (item.images && item.images.length > 0) {
-            console.log(`Uploading ${item.images.length} images for item: ${item.name}`);
-            try {
-              const uploadResults = await ImageUploadService.uploadMultipleImages(
-                item.images, 
-                'item-images'
-              );
-              itemImageUrls = uploadResults.map(result => result.publicUrl);
-              console.log(`Item images uploaded successfully for ${item.name}:`, itemImageUrls);
-            } catch (uploadError) {
-              console.error(`Failed to upload images for item ${item.name}:`, uploadError);
-              // Continue without images rather than failing the entire transaction
+            // Check if images are already URLs (already uploaded) or base64 data (need upload)
+            const needsUpload = item.images.some(img => 
+              img.startsWith('data:image/') || img.includes('base64')
+            );
+            
+            if (needsUpload) {
+              console.log(`Uploading ${item.images.length} images for item: ${item.name}`);
+              try {
+                // Upload images one by one to avoid Promise.all failures
+                const uploadPromises = item.images.map(async (base64, index) => {
+                  try {
+                    const result = await ImageUploadService.uploadBase64Image(base64, 'item-images', `item-${item.id}-${index + 1}`);
+                    return result.publicUrl;
+                  } catch (uploadError) {
+                    console.error(`Failed to upload image ${index + 1} for item ${item.name}:`, uploadError);
+                    return null; // Return null for failed uploads
+                  }
+                });
+                
+                const uploadResults = await Promise.all(uploadPromises);
+                itemImageUrls = uploadResults.filter(url => url !== null); // Filter out failed uploads
+                console.log(`Item images uploaded successfully for ${item.name}:`, itemImageUrls);
+              } catch (uploadError) {
+                console.error(`Failed to upload images for item ${item.name}:`, uploadError);
+                // Continue without images rather than failing the entire transaction
+              }
+            } else {
+              // Images are already URLs, use them directly
+              console.log(`Item images are already URLs for ${item.name}, using them directly:`, item.images);
+              itemImageUrls = item.images;
             }
           }
           
           return {
-            ...item,
+            id: item.id || crypto.randomUUID(), // Generate proper UUID if not provided
+            name: item.name,
+            weight: item.weight,
+            pieces: item.pieces,
+            price: item.price,
+            total: item.total,
+            images: itemImageUrls.length > 0 ? itemImageUrls : undefined,
             transaction_id: transaction.id,
-            images: itemImageUrls.length > 0 ? itemImageUrls : undefined
+            business_id: item.businessId // Convert camelCase to snake_case
           };
         }));
-        
-        console.log('Inserting transaction items with uploaded images:', processedItems);
 
-        const { error: itemsError } = await supabase
-          .from('transaction_items')
-          .insert(processedItems);
+        // Filter out failed items and log any failures
+        const successfulItems = processedItems
+          .filter((result): result is PromiseFulfilledResult<any> => result.status === 'fulfilled')
+          .map(result => result.value);
+
+        const failedItems = processedItems
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected');
+
+        if (failedItems.length > 0) {
+          console.error('Some items failed to process:', failedItems.map(result => result.reason));
+        }
+
+        console.log(`Successfully processed ${successfulItems.length} out of ${items.length} items`);
+        
+        console.log('Inserting transaction items with uploaded images:', successfulItems);
+
+        // Insert items with retry logic for duplicate key errors
+        let itemsError = null;
+        let retryCount = 0;
+        const maxRetries = 3;
+
+        while (retryCount < maxRetries) {
+          try {
+            const { error } = await supabase
+              .from('transaction_items')
+              .insert(successfulItems);
+
+            if (error) {
+              // If it's a duplicate key error, try to delete and re-insert
+              if (error.code === '23505') {
+                console.log(`Duplicate key error detected, retrying... (attempt ${retryCount + 1})`);
+                
+                // Delete existing items for this transaction
+                await supabase
+                  .from('transaction_items')
+                  .delete()
+                  .eq('transaction_id', transaction.id);
+                
+                // Wait a bit before retrying
+                await new Promise(resolve => setTimeout(resolve, 100 * (retryCount + 1)));
+                
+                retryCount++;
+                continue;
+              } else {
+                itemsError = error;
+                break;
+              }
+            } else {
+              // Success, break out of retry loop
+              break;
+            }
+          } catch (retryError) {
+            console.error(`Retry attempt ${retryCount + 1} failed:`, retryError);
+            retryCount++;
+            if (retryCount >= maxRetries) {
+              itemsError = retryError;
+              break;
+            }
+            // Wait before next retry
+            await new Promise(resolve => setTimeout(resolve, 200 * (retryCount + 1)));
+          }
+        }
 
         if (itemsError) {
-          console.error('Error inserting transaction items:', itemsError);
+          console.error('Error inserting transaction items after retries:', itemsError);
           throw itemsError;
         }
         
-        console.log('Successfully saved', items.length, 'transaction items');
+        console.log('Successfully saved', successfulItems.length, 'transaction items');
+      } else if (isDraftWithNoItems) {
+        console.log('Skipping items save for draft transaction with no items:', transaction.id);
       } else {
         console.log('No items to save for transaction:', transaction.id);
       }
@@ -831,6 +1032,7 @@ class SupabaseDataService {
   // Employee methods
   async getAllEmployees(): Promise<Employee[]> {
     try {
+      console.log('getAllEmployees: Fetching employees from database...');
       const { data, error } = await supabase
         .from('employees')
         .select(`
@@ -839,9 +1041,17 @@ class SupabaseDataService {
         `)
         .order('name');
 
-      if (error) throw error;
+      if (error) {
+        console.error('getAllEmployees: Database error:', error);
+        throw error;
+      }
 
-      return (data || []).map(employee => convertEmployeeFromDb(employee));
+      console.log('getAllEmployees: Raw data from database:', data?.length || 0, 'employees');
+      console.log('getAllEmployees: Raw employee data:', data?.map(e => ({ id: e.id, name: e.name })));
+
+      const employees = (data || []).map(employee => convertEmployeeFromDb(employee));
+      console.log('getAllEmployees: Returning', employees.length, 'employees');
+      return employees;
     } catch (error) {
       console.error('Error fetching employees:', error);
       return [];
@@ -888,12 +1098,19 @@ class SupabaseDataService {
 
   async deleteEmployee(id: string): Promise<void> {
     try {
+      console.log('Deleting employee ID:', id);
+      
       const { error } = await supabase
         .from('employees')
         .delete()
         .eq('id', id);
 
-      if (error) throw error;
+      if (error) {
+        console.error('Delete employee failed:', error);
+        throw error;
+      }
+      
+      console.log('Employee deleted successfully');
     } catch (error) {
       console.error('Error deleting employee:', error);
       throw error;
@@ -909,10 +1126,161 @@ class SupabaseDataService {
         .order('timestamp', { ascending: false });
 
       if (error) throw error;
-      return data || [];
+      
+      // Convert snake_case to camelCase
+      return (data || []).map((dbEntry: any) => ({
+        id: dbEntry.id,
+        type: dbEntry.type,
+        amount: dbEntry.amount,
+        description: dbEntry.description,
+        timestamp: dbEntry.timestamp,
+        employee: dbEntry.employee,
+        transactionId: dbEntry.transaction_id,
+        businessId: dbEntry.business_id, // Convert snake_case to camelCase
+        createdBy: dbEntry.created_by,
+        createdAt: dbEntry.created_at,
+        updatedAt: dbEntry.updated_at
+      }));
     } catch (error) {
       console.error('Error fetching cash entries:', error);
       return [];
+    }
+  }
+
+  async getCashEntriesPaginated(page: number = 1, pageSize: number = 10, dateFilter?: { startDate?: string, endDate?: string }): Promise<{ entries: CashEntry[], total: number, hasMore: boolean }> {
+    try {
+      const offset = (page - 1) * pageSize;
+      
+      // Build query
+      let query = supabase
+        .from('cash_entries')
+        .select('*', { count: 'exact' })
+        .order('timestamp', { ascending: false })
+        .range(offset, offset + pageSize - 1);
+
+      // Apply date filter if provided
+      if (dateFilter?.startDate) {
+        query = query.gte('timestamp', dateFilter.startDate);
+      }
+      if (dateFilter?.endDate) {
+        query = query.lte('timestamp', dateFilter.endDate);
+      }
+
+      const { data, error, count } = await query;
+
+      if (error) throw error;
+      
+      // Convert snake_case to camelCase
+      const entries = (data || []).map((dbEntry: any) => ({
+        id: dbEntry.id,
+        type: dbEntry.type,
+        amount: dbEntry.amount,
+        description: dbEntry.description,
+        timestamp: dbEntry.timestamp,
+        employee: dbEntry.employee,
+        transactionId: dbEntry.transaction_id,
+        businessId: dbEntry.business_id,
+        createdBy: dbEntry.created_by,
+        createdAt: dbEntry.created_at,
+        updatedAt: dbEntry.updated_at
+      }));
+
+      const total = count || 0;
+      const hasMore = offset + pageSize < total;
+
+      return {
+        entries,
+        total,
+        hasMore
+      };
+    } catch (error) {
+      console.error('Error fetching paginated cash entries:', error);
+      return {
+        entries: [],
+        total: 0,
+        hasMore: false
+      };
+    }
+  }
+
+  async getCashMetrics(dateFilter?: { startDate?: string, endDate?: string }): Promise<{
+    transactionIncome: number;
+    totalExpenses: number;
+    currentBalance: number;
+    sellIncome: number;
+    buyExpenses: number;
+    generalExpenses: number;
+    adjustments: number;
+  }> {
+    try {
+      let query = supabase
+        .from('cash_entries')
+        .select('type, amount');
+
+      // Apply date filter if provided
+      if (dateFilter?.startDate) {
+        query = query.gte('timestamp', dateFilter.startDate);
+      }
+      if (dateFilter?.endDate) {
+        query = query.lte('timestamp', dateFilter.endDate);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      // Calculate metrics from filtered data
+      const entries = data || [];
+      
+      // Transaction income (sell entries)
+      const sellIncome = entries
+        .filter(entry => entry.type === 'sell')
+        .reduce((sum, entry) => sum + entry.amount, 0);
+
+      // Transaction expenses (buy entries)
+      const buyExpenses = entries
+        .filter(entry => entry.type === 'buy')
+        .reduce((sum, entry) => sum + Math.abs(entry.amount), 0);
+
+      // General expenses
+      const generalExpenses = entries
+        .filter(entry => entry.type === 'expense')
+        .reduce((sum, entry) => sum + Math.abs(entry.amount), 0);
+
+      // Adjustments
+      const adjustments = entries
+        .filter(entry => entry.type === 'adjustment')
+        .reduce((sum, entry) => sum + entry.amount, 0);
+
+      // Total transaction income (sell)
+      const transactionIncome = sellIncome;
+
+      // Total expenses (buy + general)
+      const totalExpenses = buyExpenses + generalExpenses;
+
+      // Current balance (sum of all entries in the date range)
+      const currentBalance = entries.reduce((sum, entry) => sum + entry.amount, 0);
+
+      return {
+        transactionIncome,
+        totalExpenses,
+        currentBalance,
+        sellIncome,
+        buyExpenses,
+        generalExpenses,
+        adjustments
+      };
+    } catch (error) {
+      console.error('Error fetching cash metrics:', error);
+      return {
+        transactionIncome: 0,
+        totalExpenses: 0,
+        currentBalance: 0,
+        sellIncome: 0,
+        buyExpenses: 0,
+        generalExpenses: 0,
+        adjustments: 0
+      };
     }
   }
 
@@ -934,9 +1302,24 @@ class SupabaseDataService {
 
   async saveCashEntry(cashEntry: CashEntry): Promise<void> {
     try {
+      // Convert camelCase to snake_case for database
+      const dbCashEntry = {
+        id: cashEntry.id,
+        type: cashEntry.type,
+        amount: cashEntry.amount,
+        description: cashEntry.description,
+        timestamp: cashEntry.timestamp,
+        employee: cashEntry.employee,
+        transaction_id: cashEntry.transaction_id,
+        business_id: cashEntry.businessId, // Convert camelCase to snake_case
+        created_by: cashEntry.created_by,
+        created_at: cashEntry.created_at,
+        updated_at: cashEntry.updated_at
+      };
+
       const { error } = await supabase
         .from('cash_entries')
-        .upsert(cashEntry);
+        .upsert(dbCashEntry);
 
       if (error) throw error;
     } catch (error) {
@@ -1080,6 +1463,419 @@ class SupabaseDataService {
       }
     } catch (error) {
       console.error('Error updating all employee stats:', error);
+    }
+  }
+
+  // Financial metrics methods for optimized queries
+  async getFinancialMetrics(options?: {
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{
+    currentBalance: number;
+    totalSpent: number;
+    totalEarned: number;
+    netProfit: number;
+    totalTransactions: number;
+    totalPurchases: number;
+    totalSales: number;
+  }> {
+    try {
+      console.time('getFinancialMetrics');
+      
+      const { startDate, endDate } = options || {};
+
+      // Get current balance from cash entries
+      const { data: cashEntries, error: cashError } = await supabase
+        .from('cash_entries')
+        .select('amount');
+
+      if (cashError) throw cashError;
+
+      const currentBalance = cashEntries?.reduce((sum, entry) => sum + entry.amount, 0) || 0;
+
+      // Build transaction query with date filtering
+      let transactionQuery = supabase
+        .from('transactions')
+        .select('type, total, expenses, status');
+
+      if (startDate && endDate) {
+        transactionQuery = transactionQuery
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+
+      const { data: transactions, error: transactionError } = await transactionQuery;
+
+      if (transactionError) throw transactionError;
+
+      // Calculate metrics from transactions
+      const completedTransactions = transactions?.filter(t => t.status === 'completed') || [];
+      const buyTransactions = completedTransactions.filter(t => t.type === 'buy');
+      const sellTransactions = completedTransactions.filter(t => t.type === 'sell');
+
+      const totalSpent = buyTransactions.reduce((sum, t) => sum + (t.total || 0) + (t.expenses || 0), 0);
+      const totalEarned = sellTransactions.reduce((sum, t) => sum + (t.total || 0) - (t.expenses || 0), 0);
+      const netProfit = totalEarned - totalSpent;
+      const totalTransactions = completedTransactions.length;
+      const totalPurchases = buyTransactions.length;
+      const totalSales = sellTransactions.length;
+
+      console.timeEnd('getFinancialMetrics');
+
+      return {
+        currentBalance,
+        totalSpent,
+        totalEarned,
+        netProfit,
+        totalTransactions,
+        totalPurchases,
+        totalSales
+      };
+    } catch (error) {
+      console.error('Error fetching financial metrics:', error);
+      return {
+        currentBalance: 0,
+        totalSpent: 0,
+        totalEarned: 0,
+        netProfit: 0,
+        totalTransactions: 0,
+        totalPurchases: 0,
+        totalSales: 0
+      };
+    }
+  }
+
+  // Get only transactions for a specific page (no count)
+  async getTransactionsPage(options?: {
+    page?: number;
+    limit?: number;
+    startDate?: string;
+    endDate?: string;
+    status?: string[];
+    type?: 'buy' | 'sell';
+  }): Promise<Transaction[]> {
+    try {
+      console.time('getTransactionsPage');
+      
+      const { 
+        page = 1, 
+        limit = 20, 
+        startDate, 
+        endDate, 
+        status,
+        type 
+      } = options || {};
+
+      const offset = (page - 1) * limit;
+
+      // Build query for transactions only (no count)
+      let query = supabase
+        .from('transactions')
+        .select('*, transaction_items (*)')
+        .order('timestamp', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      // Apply filters
+      if (startDate && endDate) {
+        query = query
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+
+      if (status && status.length > 0) {
+        query = query.in('status', status);
+      }
+
+      if (type) {
+        query = query.eq('type', type);
+      }
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+
+      console.timeEnd('getTransactionsPage');
+      console.log(`Fetched page ${page} with ${data?.length || 0} transactions`);
+
+      return (data || []).map(transaction => convertTransactionFromDb(transaction));
+    } catch (error) {
+      console.error('Error fetching transactions page:', error);
+      return [];
+    }
+  }
+
+  // Get total count for pagination (separate query)
+  async getTransactionsCount(options?: {
+    startDate?: string;
+    endDate?: string;
+    status?: string[];
+    type?: 'buy' | 'sell';
+  }): Promise<number> {
+    try {
+      console.time('getTransactionsCount');
+      
+      const { 
+        startDate, 
+        endDate, 
+        status,
+        type 
+      } = options || {};
+
+      // Build count query (no data, just count)
+      let query = supabase
+        .from('transactions')
+        .select('id', { count: 'exact', head: true });
+
+      // Apply filters
+      if (startDate && endDate) {
+        query = query
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+
+      if (status && status.length > 0) {
+        query = query.in('status', status);
+      }
+
+      if (type) {
+        query = query.eq('type', type);
+      }
+
+      const { count, error } = await query;
+
+      if (error) throw error;
+
+      console.timeEnd('getTransactionsCount');
+      console.log(`Total transactions count: ${count || 0}`);
+
+      return count || 0;
+    } catch (error) {
+      console.error('Error fetching transactions count:', error);
+      return 0;
+    }
+  }
+
+  // Specialized Reports queries - return only aggregated data
+  async getReportsMetrics(options?: {
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{
+    totalTransactions: number;
+    totalBought: number;
+    totalSold: number;
+    totalExpenses: number;
+    netProfit: number;
+    buyCount: number;
+    sellCount: number;
+    topItems: Array<{
+      name: string;
+      total: number;
+      weight: number;
+      pieces: number;
+    }>;
+    employeePerformance: Array<{
+      name: string;
+      transactionCount: number;
+      totalValue: number;
+      avgValue: number;
+    }>;
+    chartData: Array<{
+      date: string;
+      purchases: number;
+      sales: number;
+    }>;
+  }> {
+    try {
+      console.time('getReportsMetrics');
+      
+      const { startDate, endDate } = options || {};
+
+      // 1. Get transaction counts and totals
+      let transactionQuery = supabase
+        .from('transactions')
+        .select('type, total, expenses, status')
+        .eq('status', 'completed')
+        .limit(10000); // Explicit limit to get all transactions
+      
+      if (startDate && endDate) {
+        transactionQuery = transactionQuery
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+      
+      const { data: transactionStats, error: statsError } = await transactionQuery;
+
+      if (statsError) throw statsError;
+
+      const totalTransactions = transactionStats?.length || 0;
+      const buyTransactions = transactionStats?.filter(t => t.type === 'buy') || [];
+      const sellTransactions = transactionStats?.filter(t => t.type === 'sell') || [];
+      
+      console.log('Reports - Fetched transactions:', {
+        total: totalTransactions,
+        buy: buyTransactions.length,
+        sell: sellTransactions.length,
+        dateFilter: startDate && endDate ? `${startDate} to ${endDate}` : 'All Time'
+      });
+      
+      const totalBought = buyTransactions.reduce((sum, t) => sum + (t.total || 0), 0);
+      const totalSold = sellTransactions.reduce((sum, t) => sum + (t.total || 0), 0);
+      const totalExpenses = transactionStats?.reduce((sum, t) => sum + (t.expenses || 0), 0) || 0;
+      const netProfit = totalSold - totalBought - totalExpenses;
+
+      // 2. Get top items
+      let itemsQuery = supabase
+        .from('transactions')
+        .select('transaction_items(name, total, weight, pieces)')
+        .eq('status', 'completed')
+        .limit(10000); // Explicit limit to get all transactions
+      
+      if (startDate && endDate) {
+        itemsQuery = itemsQuery
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+      
+      const { data: itemsData, error: itemsError } = await itemsQuery;
+
+      if (itemsError) throw itemsError;
+
+      const topItems = (itemsData || [])
+        .flatMap(t => t.transaction_items || [])
+        .reduce((acc: any, item) => {
+          const existing = acc.find((i: any) => i.name === item.name);
+          if (existing) {
+            existing.total += item.total || 0;
+            existing.weight += item.weight || 0;
+            existing.pieces += item.pieces || 0;
+          } else {
+            acc.push({
+              name: item.name,
+              total: item.total || 0,
+              weight: item.weight || 0,
+              pieces: item.pieces || 0
+            });
+          }
+          return acc;
+        }, [])
+        .sort((a: any, b: any) => b.total - a.total)
+        .slice(0, 5);
+
+      // 3. Get employee performance
+      let employeeQuery = supabase
+        .from('transactions')
+        .select('employee, total')
+        .eq('status', 'completed')
+        .limit(10000); // Explicit limit to get all transactions
+      
+      if (startDate && endDate) {
+        employeeQuery = employeeQuery
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+      
+      const { data: employeeData, error: employeeError } = await employeeQuery;
+
+      if (employeeError) throw employeeError;
+
+      const employeePerformance = (employeeData || [])
+        .reduce((acc: any, t) => {
+          const existing = acc.find((e: any) => e.name === t.employee);
+          if (existing) {
+            existing.transactionCount += 1;
+            existing.totalValue += t.total || 0;
+          } else {
+            acc.push({
+              name: t.employee,
+              transactionCount: 1,
+              totalValue: t.total || 0,
+              avgValue: 0
+            });
+          }
+          return acc;
+        }, [])
+        .map((emp: any) => ({
+          ...emp,
+          avgValue: emp.transactionCount > 0 ? emp.totalValue / emp.transactionCount : 0
+        }))
+        .sort((a: any, b: any) => b.totalValue - a.totalValue);
+
+      // 4. Get chart data (grouped by date)
+      let chartQuery = supabase
+        .from('transactions')
+        .select('timestamp, type, total')
+        .eq('status', 'completed')
+        .order('timestamp', { ascending: true })
+        .limit(10000); // Explicit limit to get all transactions
+      
+      if (startDate && endDate) {
+        chartQuery = chartQuery
+          .gte('timestamp', startDate)
+          .lte('timestamp', endDate);
+      }
+      
+      const { data: chartData, error: chartError } = await chartQuery;
+
+      if (chartError) throw chartError;
+
+      const chartDataGrouped = (chartData || [])
+        .reduce((acc: any, t) => {
+          const date = new Date(t.timestamp).toISOString().split('T')[0];
+          const existing = acc.find((d: any) => d.date === date);
+          if (existing) {
+            if (t.type === 'buy') {
+              existing.purchases += t.total || 0;
+            } else {
+              existing.sales += t.total || 0;
+            }
+          } else {
+            acc.push({
+              date,
+              purchases: t.type === 'buy' ? (t.total || 0) : 0,
+              sales: t.type === 'sell' ? (t.total || 0) : 0
+            });
+          }
+          return acc;
+        }, [])
+        .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      
+      console.log('Reports - Chart data generated:', {
+        rawTransactions: chartData?.length || 0,
+        groupedDataPoints: chartDataGrouped.length,
+        dateRange: chartDataGrouped.length > 0 ? {
+          first: chartDataGrouped[0]?.date,
+          last: chartDataGrouped[chartDataGrouped.length - 1]?.date
+        } : null
+      });
+
+      console.timeEnd('getReportsMetrics');
+
+      return {
+        totalTransactions,
+        totalBought,
+        totalSold,
+        totalExpenses,
+        netProfit,
+        buyCount: buyTransactions.length,
+        sellCount: sellTransactions.length,
+        topItems,
+        employeePerformance,
+        chartData: chartDataGrouped
+      };
+    } catch (error) {
+      console.error('Error fetching reports metrics:', error);
+      return {
+        totalTransactions: 0,
+        totalBought: 0,
+        totalSold: 0,
+        totalExpenses: 0,
+        netProfit: 0,
+        buyCount: 0,
+        sellCount: 0,
+        topItems: [],
+        employeePerformance: [],
+        chartData: []
+      };
     }
   }
 }

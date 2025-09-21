@@ -5,7 +5,7 @@ export interface Transaction {
   id: string;
   type: 'buy' | 'sell';
   customerName?: string;
-  customerType: 'individual' | 'business';
+  customerType: 'individual' | 'business' | 'government';
   items: Array<{
     name: string;
     weight?: number;

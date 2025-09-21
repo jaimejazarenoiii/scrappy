@@ -1,11 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar } from './ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
-import { DateRange } from 'react-day-picker';
 import { 
   ShoppingCart, 
   DollarSign, 
@@ -18,36 +14,67 @@ import {
   TrendingDown,
   Clock,
   CalendarIcon,
-  Filter,
-  Eye
+  Eye,
+  ArrowUpRight,
+  ArrowDownRight,
+  Activity,
+  Zap,
+  Target,
+  Sparkles,
+  LogOut,
+  Loader2,
+  CheckCircle,
+  Recycle
 } from 'lucide-react';
-import { Transaction } from '../../infrastructure/database/supabaseService';
-import { format, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfYear, endOfYear } from 'date-fns';
-import { cn } from './ui/utils';
+import { Transaction, supabaseDataService } from '../../infrastructure/database/supabaseService';
+import { startOfDay, endOfDay } from 'date-fns';
+import { useAuth } from '../contexts/AuthContext';
+import BusinessSwitcher from './BusinessSwitcher';
+import RealtimeStatus from './RealtimeStatus';
+import { useRealtimeData } from '../hooks/useRealtimeData';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
+import { Alert, AlertDescription } from './ui/alert';
 
 interface DashboardProps {
   onNavigate: (view: string) => void;
-  transactions: Transaction[];
-  currentBalance: number;
-  cashEntries: any[];
   onTransactionClick?: (transactionId: string) => void;
   userRole: 'owner' | 'employee';
+  userName?: string;
+  businessName?: string;
 }
 
-type DateFilter = 'today' | 'week' | 'month' | 'year' | 'custom';
+export default function Dashboard({ onNavigate, onTransactionClick, userRole, userName = "User", businessName = "Jazareno Scrap Trading" }: DashboardProps) {
+  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const { user, logout } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [showLogoutSuccess, setShowLogoutSuccess] = useState(false);
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  
+  // Use real-time data hook for all data
+  const { 
+    transactions, 
+    cashEntries, 
+    loading: dataLoading, 
+    error: dataError,
+    refreshData 
+  } = useRealtimeData();
 
-export default function Dashboard({ onNavigate, transactions, cashEntries, onTransactionClick, userRole, currentBalance }: DashboardProps) {
-  const [dateFilter, setDateFilter] = useState<DateFilter>('today');
-  const [dateRange, setDateRange] = useState<DateRange | undefined>();
-  const [calendarOpen, setCalendarOpen] = useState(false);
-
-  const formatCurrency = (amount: number) => 
-    new Intl.NumberFormat('en-PH', { 
-      style: 'currency', 
-      currency: 'PHP',
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    }).format(amount);
+  const formatCurrency = (amount: number) => {
+    const formatted = Math.abs(amount).toLocaleString('en-PH', { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
+    return amount < 0 ? `-₱${formatted}` : `₱${formatted}`;
+  };
 
   const formatTime = (date: Date) => 
     new Date(date).toLocaleTimeString('en-PH', { 
@@ -64,55 +91,30 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
 
   const getDateRange = (): { start: Date; end: Date } => {
     const now = new Date();
-    
-    switch (dateFilter) {
-      case 'today':
-        return { start: startOfDay(now), end: endOfDay(now) };
-      case 'week':
-        return { start: startOfWeek(now), end: endOfWeek(now) };
-      case 'month':
-        return { start: startOfMonth(now), end: endOfMonth(now) };
-      case 'year':
-        return { start: startOfYear(now), end: endOfYear(now) };
-      case 'custom':
-        if (dateRange?.from && dateRange?.to) {
-          return { start: startOfDay(dateRange.from), end: endOfDay(dateRange.to) };
-        }
-        return { start: startOfDay(now), end: endOfDay(now) };
-      default:
-        return { start: startOfDay(now), end: endOfDay(now) };
-    }
+    return { start: startOfDay(now), end: endOfDay(now) };
   };
 
-  const getDateFilterLabel = () => {
-    switch (dateFilter) {
-      case 'today': return 'Today';
-      case 'week': return 'This Week';
-      case 'month': return 'This Month';
-      case 'year': return 'This Year';
-      case 'custom': 
-        if (dateRange?.from && dateRange?.to) {
-          return `${format(dateRange.from, 'MMM dd')} - ${format(dateRange.to, 'MMM dd')}`;
-        }
-        return 'Custom Range';
-      default: return 'Today';
-    }
-  };
+  // Calculate current balance from cash entries
+  const currentBalance = useMemo(() => {
+    const expenseEntries = cashEntries.filter(e => e.type === 'expense');
+    const transactionEntries = cashEntries.filter(e => e.type === 'transaction');
+    const adjustmentEntries = cashEntries.filter(e => e.type === 'adjustment');
 
-  // Helper function to calculate transaction total from items when database total is 0
+    const totalExpenses = expenseEntries.reduce((sum, entry) => sum + entry.amount, 0);
+    const totalTransactionRevenue = transactionEntries.reduce((sum, entry) => sum + entry.amount, 0);
+    const totalAdjustments = adjustmentEntries.reduce((sum, entry) => sum + entry.amount, 0);
+
+    return totalTransactionRevenue + totalAdjustments + totalExpenses;
+  }, [cashEntries]);
+
   const calculateTransactionTotal = (transaction: Transaction): number => {
-    // If transaction.total exists and is not 0, use it
     if (transaction.total && transaction.total !== 0) {
       return transaction.total;
     }
     
-    // Otherwise, calculate from items
     if (transaction.items && transaction.items.length > 0) {
       const subtotal = transaction.items.reduce((sum, item) => sum + (item.total || 0), 0);
       const expenses = transaction.expenses || 0;
-      
-      // For buy transactions: total = subtotal + expenses (expenses are costs)
-      // For sell transactions: total = subtotal - expenses (expenses reduce revenue)
       return transaction.type === 'buy' ? subtotal + expenses : subtotal - expenses;
     }
     
@@ -120,39 +122,42 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
   };
 
   const filteredData = useMemo(() => {
+    // For metrics: Filter by today's date
     const { start, end } = getDateRange();
-    const filtered = transactions.filter(transaction => {
+    const todayTransactions = transactions.filter(transaction => {
       const transactionDate = new Date(transaction.timestamp);
       return transactionDate >= start && transactionDate <= end;
     });
 
-    const buyTransactions = filtered.filter(t => t.type === 'buy');
-    const sellTransactions = filtered.filter(t => t.type === 'sell');
-    // Only read from completed transactions for calculations
-    const completedTransactions = filtered.filter(t => t.status === 'completed');
-    const completedBuyTransactions = completedTransactions.filter(t => t.type === 'buy');
-    const completedSellTransactions = completedTransactions.filter(t => t.type === 'sell');
-    
-    const completedTotalBought = completedBuyTransactions.reduce((sum, t) => sum + calculateTransactionTotal(t), 0);
-    const completedTotalSold = completedSellTransactions.reduce((sum, t) => sum + calculateTransactionTotal(t), 0);
-    const completedTotalExpenses = completedTransactions.reduce((sum, t) => sum + (t.expenses || 0), 0);
-    const completedNetProfit = completedTotalSold - completedTotalBought - completedTotalExpenses;
+    // For recent transactions: Get the last 20 transactions overall, sorted by timestamp
+    const recentTransactions = transactions
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 20);
 
-    // Recent transactions from filtered data
-    const recentTransactions = filtered.slice(0, 5);
+    // Calculate metrics from today's transactions
+    const todayBuyTransactions = todayTransactions.filter(t => t.type === 'buy');
+    const todaySellTransactions = todayTransactions.filter(t => t.type === 'sell');
+    const todayCompletedTransactions = todayTransactions.filter(t => t.status === 'completed');
+    const todayCompletedBuyTransactions = todayCompletedTransactions.filter(t => t.type === 'buy');
+    const todayCompletedSellTransactions = todayCompletedTransactions.filter(t => t.type === 'sell');
+    
+    const todayTotalBought = todayCompletedBuyTransactions.reduce((sum, t) => sum + calculateTransactionTotal(t), 0);
+    const todayTotalSold = todayCompletedSellTransactions.reduce((sum, t) => sum + calculateTransactionTotal(t), 0);
+    const todayTotalExpenses = todayCompletedTransactions.reduce((sum, t) => sum + (t.expenses || 0), 0);
+    const todayNetProfit = todayTotalSold - todayTotalBought - todayTotalExpenses;
 
     return {
-      transactions: filtered,
-      recentTransactions,
-      totalBought: completedTotalBought,
-      totalSold: completedTotalSold,
-      totalExpenses: completedTotalExpenses,
-      netProfit: completedNetProfit,
-      transactionCount: filtered.length,
-      buyCount: buyTransactions.length,
-      sellCount: sellTransactions.length
+      transactions: todayTransactions, // For compatibility
+      recentTransactions: recentTransactions.slice(0, 5), // Show 5 most recent from the real-time data
+      totalBought: todayTotalBought,
+      totalSold: todayTotalSold,
+      totalExpenses: todayTotalExpenses,
+      netProfit: todayNetProfit,
+      transactionCount: todayTransactions.length,
+      buyCount: todayCompletedBuyTransactions.length, // Only count completed purchases
+      sellCount: todayCompletedSellTransactions.length // Only count completed sales
     };
-  }, [transactions, dateFilter, dateRange]);
+  }, [transactions]);
 
   const handleTransactionClick = (transactionId: string) => {
     if (onTransactionClick) {
@@ -160,554 +165,837 @@ export default function Dashboard({ onNavigate, transactions, cashEntries, onTra
     }
   };
 
-  // Employee Dashboard - Simplified View
+  // Logout functionality
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    setShowLogoutDialog(false);
+    try {
+      await logout();
+      setShowLogoutSuccess(true);
+      setTimeout(() => {
+        setShowLogoutSuccess(false);
+      }, 1000);
+    } catch (error) {
+      console.error('Logout failed:', error);
+      logout();
+    } finally {
+      setIsLoggingOut(false);
+    }
+  };
+
+  const handleLogoutClick = () => {
+    setShowLogoutDialog(true);
+  };
+
+  // Keyboard shortcut for logout (Ctrl+Shift+L)
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.key === 'L') {
+        event.preventDefault();
+        handleLogoutClick();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const getRoleBadge = (role: string) => {
+    if (role === 'owner') {
+      return <Badge className="bg-gradient-to-r from-purple-100 to-indigo-100 text-purple-800 text-xs border border-purple-200/60 shadow-sm">👑 Owner</Badge>;
+    }
+    return <Badge className="bg-gradient-to-r from-blue-100 to-cyan-100 text-blue-800 text-xs border border-blue-200/60 shadow-sm">👤 Employee</Badge>;
+  };
+
+  // Employee Dashboard - Modern Design
   if (userRole === 'employee') {
     return (
-      <div className="p-6 space-y-8 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="text-center py-8">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-emerald-700 to-teal-700 bg-clip-text text-transparent">
-            Employee Dashboard
-          </h1>
-          <p className="text-gray-600 mt-2 text-lg">Scrap buying and selling operations</p>
-        </div>
+      <>
+        {/* Logout Success Alert */}
+        {showLogoutSuccess && (
+          <Alert className="border-green-200 bg-green-50 mb-0">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <AlertDescription className="text-green-800">
+              Successfully signed out! Redirecting...
+            </AlertDescription>
+          </Alert>
+        )}
 
-        {/* Quick Action Buttons */}
-        <div className="grid grid-cols-2 gap-6 max-w-lg mx-auto">
-          <Button
-            onClick={() => onNavigate('buy-scrap')}
-            className="h-36 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-xl shadow-blue-500/25 border-0 transform hover:scale-105 transition-all duration-300"
-          >
-            <div className="flex flex-col items-center space-y-3">
-              <div className="p-3 bg-white/20 rounded-full">
-                <Plus className="h-8 w-8" />
-              </div>
-              <span className="font-semibold text-lg">Buy Scrap</span>
-              <span className="text-sm opacity-90">Purchase materials</span>
-            </div>
-          </Button>
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+          {/* Animated Background Elements */}
+          <div className="absolute inset-0">
+            {/* Gradient Orbs */}
+            <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
+            <div className="absolute top-0 -right-4 w-72 h-72 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
+            <div className="absolute -bottom-8 left-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+            
+            {/* Grid Pattern */}
+            <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%239C92AC%22%20fill-opacity%3D%220.1%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%221%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
+            
+            {/* Floating Particles */}
+            <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-white rounded-full animate-ping opacity-75"></div>
+            <div className="absolute top-3/4 right-1/4 w-1 h-1 bg-purple-300 rounded-full animate-ping opacity-75 animation-delay-1000"></div>
+            <div className="absolute top-1/2 right-1/3 w-1.5 h-1.5 bg-pink-300 rounded-full animate-ping opacity-75 animation-delay-2000"></div>
+          </div>
 
-          <Button
-            onClick={() => onNavigate('sell-scrap')}
-            className="h-36 bg-gradient-to-br from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white shadow-xl shadow-emerald-500/25 border-0 transform hover:scale-105 transition-all duration-300"
-          >
-            <div className="flex flex-col items-center space-y-3">
-              <div className="p-3 bg-white/20 rounded-full">
-                <DollarSign className="h-8 w-8" />
-              </div>
-              <span className="font-semibold text-lg">Sell Scrap</span>
-              <span className="text-sm opacity-90">Process sales</span>
-            </div>
-          </Button>
-        </div>
+          {/* Main Content */}
+          <div className="relative z-10 w-full max-w-7xl">
+            <div className="space-y-8">
+            {/* Integrated Header with User Info */}
+            <div className="pt-8 pb-4 animate-fade-in-up">
+              <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center space-x-6">
+                      {/* App Logo */}
+                      <div className="relative">
+                        <div className="h-12 w-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/25 transform hover:scale-105 transition-all duration-300">
+                          <Recycle className="h-7 w-7 text-white" />
+                        </div>
+                        <div className="absolute -inset-1 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl blur-md"></div>
+                      </div>
+                      
+                      {/* App Title */}
+                      <div>
+                        <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
+                          Scrappy
+                        </h1>
+                        <p className="text-sm text-purple-200 font-medium">Junkshop Management System</p>
+                      </div>
 
-        {/* Employee's Transactions */}
-        <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Clock className="h-5 w-5" />
-              <span>Recent Transactions</span>
-            </div>
-            <Badge variant="outline" className="text-xs">
-              {getDateFilterLabel()}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {filteredData.recentTransactions.length > 0 ? (
-            filteredData.recentTransactions.map((transaction) => (
-              <div
-                key={transaction.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
-                onClick={() => handleTransactionClick(transaction.id)}
-              >
-                <div className="flex items-center space-x-3">
-                  <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                    transaction.type === 'buy' 
-                      ? 'bg-red-100 text-red-600' 
-                      : 'bg-green-100 text-green-600'
-                  }`}>
-                    {transaction.type === 'buy' ? (
-                      <ShoppingCart className="h-5 w-5" />
-                    ) : (
-                      <DollarSign className="h-5 w-5" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="flex items-center space-x-2">
-                      <p className="font-medium">
-                        #{transaction.id} - {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
-                      </p>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
-                        transaction.status === 'completed' ? 'bg-green-100 text-green-800' :
-                        transaction.status === 'for-payment' ? 'bg-blue-100 text-blue-800' :
-                        transaction.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {transaction.status === 'completed' ? 'Completed' :
-                         transaction.status === 'for-payment' ? 'For Payment' :
-                         transaction.status === 'in-progress' ? 'In Progress' :
-                         'Cancelled'}
-                      </span>
                     </div>
-                    <p className="text-sm text-gray-500">
-                      {formatDate(transaction.timestamp)} {formatTime(transaction.timestamp)} • {transaction.employee}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <div className="text-right">
-                    <p className={`font-semibold ${
-                      transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'
-                    }`}>
-                      {transaction.type === 'buy' ? '-' : '+'}{formatCurrency(calculateTransactionTotal(transaction))}
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {transaction.items.length} item{transaction.items.length > 1 ? 's' : ''}
-                    </p>
-                  </div>
-                  <Eye className="h-4 w-4 text-gray-400" />
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              <ShoppingCart className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p>No transactions found for {getDateFilterLabel().toLowerCase()}</p>
-              <p className="text-sm">Try selecting a different date range</p>
-            </div>
-          )}
 
-          {filteredData.recentTransactions.length > 0 && filteredData.transactionCount > 5 && (
-            <div className="pt-3 border-t border-gray-200">
-              <Button 
-                variant="outline" 
-                  onClick={() =>
-                    onNavigate('all-transactions')
-                  }
-                className="w-full"
-              >
-                View All {filteredData.transactionCount} Transactions
-              </Button>
+                    <div className="flex items-center space-x-4">
+
+                      {/* User Info and Sign Out */}
+                      <div className="flex items-center space-x-3">
+                        <div className="text-right">
+                          <div className="flex items-center justify-end space-x-2 mt-1">
+                            {userRole === 'owner' ? (
+                              <Badge className="bg-gradient-to-r from-yellow-400/20 to-orange-500/20 text-yellow-200 text-xs border border-yellow-400/30 shadow-sm">👑 Owner</Badge>
+                            ) : (
+                              <Badge className="bg-gradient-to-r from-blue-400/20 to-cyan-500/20 text-blue-200 text-xs border border-blue-400/30 shadow-sm">👤 Employee</Badge>
+                            )}
+                          </div>
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          className="text-red-300 hover:text-red-200 hover:bg-red-500/20 border border-red-400/30"
+                          onClick={handleLogoutClick}
+                          disabled={isLoggingOut}
+                        >
+                          {isLoggingOut ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Signing Out...
+                            </>
+                          ) : (
+                            <>
+                              <LogOut className="mr-2 h-4 w-4" />
+                              Sign Out
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-          )}
-        </CardContent>
-      </Card>
-      </div>
+
+            {/* Personalized Greeting */}
+            <div className="pb-4 animate-fade-in-up">
+              <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+                <CardContent className="p-8">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h1 className="text-4xl font-bold text-white mb-2">
+                        Hi, {userName}! 👋
+                      </h1>
+                      <div className="flex items-center space-x-3">
+                        <div className="h-1 w-12 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full"></div>
+                        <h2 className="text-2xl font-semibold bg-gradient-to-r from-purple-200 to-pink-200 bg-clip-text text-transparent">
+                          {businessName}
+                        </h2>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm text-purple-200">Today</p>
+                      <p className="text-lg font-semibold text-white">
+                        {new Date().toLocaleDateString('en-PH', { 
+                          weekday: 'long', 
+                          month: 'long', 
+                          day: 'numeric' 
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+          {/* Quick Actions */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+            <Card 
+              className="group relative overflow-hidden bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl transition-all duration-500 hover:scale-105 hover:shadow-purple-500/40 cursor-pointer animate-fade-in-scale stagger-1"
+              onClick={() => onNavigate('buy-scrap')}
+              onMouseEnter={() => setHoveredCard('buy')}
+              onMouseLeave={() => setHoveredCard(null)}
+            >
+              <CardContent className="p-8 text-white">
+                <div className="absolute inset-0 bg-gradient-to-br from-purple-500/20 to-pink-500/20"></div>
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="p-4 bg-gradient-to-br from-purple-500/30 to-pink-500/30 rounded-2xl backdrop-blur-sm border border-white/20">
+                      <Plus className="h-8 w-8" />
+                    </div>
+                    <ArrowUpRight className={`h-6 w-6 transition-transform duration-300 ${hoveredCard === 'buy' ? 'translate-x-1 -translate-y-1' : ''}`} />
+                  </div>
+                  <h3 className="text-2xl font-bold mb-2">Buy Scrap</h3>
+                  <p className="text-purple-200 text-lg">Purchase materials from suppliers</p>
+                  <div className="mt-6 flex items-center text-sm text-purple-300">
+                    <Activity className="h-4 w-4 mr-2" />
+                    {filteredData.buyCount} purchases today
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card 
+              className="group relative overflow-hidden bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl transition-all duration-500 hover:scale-105 hover:shadow-pink-500/40 cursor-pointer animate-fade-in-scale stagger-2"
+              onClick={() => onNavigate('sell-scrap')}
+              onMouseEnter={() => setHoveredCard('sell')}
+              onMouseLeave={() => setHoveredCard(null)}
+            >
+              <CardContent className="p-8 text-white">
+                <div className="absolute inset-0 bg-gradient-to-br from-pink-500/20 to-purple-500/20"></div>
+                <div className="relative z-10">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="p-4 bg-gradient-to-br from-pink-500/30 to-purple-500/30 rounded-2xl backdrop-blur-sm border border-white/20">
+                      <DollarSign className="h-8 w-8" />
+                    </div>
+                    <ArrowUpRight className={`h-6 w-6 transition-transform duration-300 ${hoveredCard === 'sell' ? 'translate-x-1 -translate-y-1' : ''}`} />
+                  </div>
+                  <h3 className="text-2xl font-bold mb-2">Sell Scrap</h3>
+                  <p className="text-pink-200 text-lg">Process sales to customers</p>
+                  <div className="mt-6 flex items-center text-sm text-pink-300">
+                    <Target className="h-4 w-4 mr-2" />
+                    {filteredData.sellCount} sales today
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Today's Activity */}
+          <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+            <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="p-2 bg-gradient-to-r from-purple-500/30 to-pink-500/30 rounded-xl border border-white/20">
+                    <Clock className="h-5 w-5 text-white" />
+                  </div>
+                  <span className="text-xl font-semibold text-white">Today's Activity</span>
+                </div>
+                <Badge className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-200 border border-purple-400/30">
+                  {formatCurrency(filteredData.netProfit)} profit
+                </Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-6">
+              {filteredData.recentTransactions.length > 0 ? (
+                <div className="space-y-4">
+                  {filteredData.recentTransactions.map((transaction, index) => (
+                    <div
+                      key={transaction.id}
+                      className="group flex items-center justify-between p-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl hover:bg-white/20 cursor-pointer transition-all duration-300 hover:shadow-lg"
+                      onClick={() => handleTransactionClick(transaction.id)}
+                      style={{ animationDelay: `${index * 100}ms` }}
+                    >
+                      <div className="flex items-center space-x-4">
+                        <div className={`h-12 w-12 rounded-2xl flex items-center justify-center transition-all duration-300 border border-white/20 ${
+                          transaction.type === 'buy' 
+                            ? 'bg-gradient-to-r from-red-500/30 to-red-600/30 text-red-200 group-hover:from-red-500/40 group-hover:to-red-600/40' 
+                            : 'bg-gradient-to-r from-green-500/30 to-green-600/30 text-green-200 group-hover:from-green-500/40 group-hover:to-green-600/40'
+                        }`}>
+                          {transaction.type === 'buy' ? (
+                            <ShoppingCart className="h-6 w-6" />
+                          ) : (
+                            <DollarSign className="h-6 w-6" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-3">
+                            <p className="font-semibold text-white">
+                              #{transaction.id} - {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
+                            </p>
+                            <Badge className={`${
+                              transaction.status === 'completed' ? 'bg-green-500/20 text-green-200 border-green-400/30' :
+                              transaction.status === 'for-payment' ? 'bg-blue-500/20 text-blue-200 border-blue-400/30' :
+                              transaction.status === 'in-progress' ? 'bg-yellow-500/20 text-yellow-200 border-yellow-400/30' :
+                              'bg-red-500/20 text-red-200 border-red-400/30'
+                            }`}>
+                              {transaction.status === 'completed' ? 'Completed' :
+                               transaction.status === 'for-payment' ? 'For Payment' :
+                               transaction.status === 'in-progress' ? 'In Progress' :
+                               'Cancelled'}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-purple-200">
+                            {formatDate(new Date(transaction.timestamp))} {formatTime(new Date(transaction.timestamp))} • {transaction.employee}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-4">
+                        <div className="text-right">
+                          <p className={`font-bold text-lg ${
+                            transaction.type === 'buy' ? 'text-red-200' : 'text-green-200'
+                          }`}>
+                            {transaction.type === 'buy' ? '-' : '+'}{formatCurrency(Math.abs(calculateTransactionTotal(transaction)))}
+                          </p>
+                          <p className="text-sm text-purple-300">
+                            {transaction.items.length} item{transaction.items.length > 1 ? 's' : ''}
+                          </p>
+                        </div>
+                        <Eye className="h-5 w-5 text-purple-300 group-hover:text-white transition-colors" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-2xl mb-4 border border-white/20">
+                    <ShoppingCart className="h-8 w-8 text-purple-300" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-white mb-2">No transactions today</h3>
+                  <p className="text-purple-200">Start by buying or selling scrap materials</p>
+                </div>
+              )}
+
+              {filteredData.recentTransactions.length > 0 && transactions.length > 5 && (
+                <div className="pt-6 border-t border-white/20">
+                  <Button 
+                    variant="outline" 
+                    onClick={() => onNavigate('all-transactions')}
+                    className="w-full h-12 rounded-2xl border-2 border-white/30 hover:border-white/50 hover:bg-white/10 text-white transition-all duration-300"
+                  >
+                    View all transactions
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+            </div>
+          </div>
+        </div>
+
+        {/* Logout Confirmation Dialog */}
+        <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center space-x-2">
+                <LogOut className="h-5 w-5 text-red-600" />
+                <span>Sign Out Confirmation</span>
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you sure you want to sign out of Scrappy? You will need to sign back in to access your account.
+                {userRole === 'employee' && (
+                  <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                    <strong>Note:</strong> Any unsaved work in progress transactions may be lost.
+                  </div>
+                )}
+                <div className="mt-2 text-xs text-gray-500">
+                  Tip: You can also use <kbd className="px-1.5 py-0.5 bg-gray-100 border rounded text-xs">Ctrl+Shift+L</kbd> to sign out quickly.
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel 
+                onClick={() => setShowLogoutDialog(false)}
+                disabled={isLoggingOut}
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+                className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+              >
+                {isLoggingOut ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Signing Out...
+                  </>
+                ) : (
+                  <>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign Out
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
     );
   }
 
   // Owner Dashboard - Full Analytics View
   return (
-    <div className="p-6 space-y-8 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="text-center py-8">
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-emerald-700 to-teal-700 bg-clip-text text-transparent">
-          Business Overview
-        </h1>
-        <p className="text-gray-600 mt-2 text-lg">Complete business analytics and management</p>
-      </div>
-
-      {/* Date Filter Controls */}
-      <Card className="backdrop-blur-sm bg-white/80 border-0 shadow-lg shadow-gray-900/10">
-        <CardContent className="p-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center space-x-2">
-              <Filter className="h-4 w-4 text-gray-600" />
-              <span className="text-sm font-medium">View Period:</span>
-            </div>
-            
-            <Select value={dateFilter} onValueChange={(value: DateFilter) => setDateFilter(value)}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="week">This Week</SelectItem>
-                <SelectItem value="month">This Month</SelectItem>
-                <SelectItem value="year">This Year</SelectItem>
-                <SelectItem value="custom">Custom Range</SelectItem>
-              </SelectContent>
-            </Select>
-
-            {dateFilter === 'custom' && (
-              <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    className={cn(
-                      "w-60 justify-start text-left font-normal",
-                      !dateRange && "text-muted-foreground"
-                    )}
-                  >
-                    <CalendarIcon className="mr-2 h-4 w-4" />
-                    {dateRange?.from ? (
-                      dateRange.to ? (
-                        <>
-                          {format(dateRange.from, "LLL dd, y")} -{" "}
-                          {format(dateRange.to, "LLL dd, y")}
-                        </>
-                      ) : (
-                        format(dateRange.from, "LLL dd, y")
-                      )
-                    ) : (
-                      <span>Pick a date range</span>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    initialFocus
-                    mode="range"
-                    defaultMonth={dateRange?.from}
-                    selected={dateRange}
-                    onSelect={setDateRange}
-                    numberOfMonths={2}
-                  />
-                </PopoverContent>
-              </Popover>
-            )}
-
-            <Badge variant="secondary" className="ml-auto">
-              {getDateFilterLabel()} • {filteredData.transactionCount} transactions
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Financial Overview Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="bg-gradient-to-br from-blue-50/80 to-blue-100/80 border-0 shadow-xl shadow-blue-500/20 backdrop-blur-sm transform hover:scale-105 transition-all duration-300">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-blue-600 font-semibold">Current Balance</p>
-                <p className="text-2xl font-bold text-blue-900 mt-2">
-                  {userRole === 'owner' ? formatCurrency(currentBalance) : '---'}
-                </p>
-                <p className="text-xs text-blue-600 mt-2 font-medium">Available Cash</p>
-              </div>
-              <div className="h-14 w-14 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/30">
-                <Wallet className="h-7 w-7 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-red-50/80 to-red-100/80 border-0 shadow-xl shadow-red-500/20 backdrop-blur-sm transform hover:scale-105 transition-all duration-300">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-red-600 font-semibold">Total Spent</p>
-                <p className="text-2xl font-bold text-red-900 mt-2">
-                  {formatCurrency(filteredData.totalBought + filteredData.totalExpenses)}
-                </p>
-                <p className="text-xs text-red-600 mt-2 font-medium">{getDateFilterLabel()}</p>
-              </div>
-              <div className="h-14 w-14 bg-gradient-to-br from-red-500 to-red-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-500/30">
-                <TrendingDown className="h-7 w-7 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-emerald-50/80 to-emerald-100/80 border-0 shadow-xl shadow-emerald-500/20 backdrop-blur-sm transform hover:scale-105 transition-all duration-300">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-emerald-600 font-semibold">Total Earned</p>
-                <p className="text-2xl font-bold text-emerald-900 mt-2">
-                  {formatCurrency(filteredData.totalSold)}
-                </p>
-                <p className="text-xs text-emerald-600 mt-2 font-medium">{getDateFilterLabel()}</p>
-              </div>
-              <div className="h-14 w-14 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/30">
-                <TrendingUp className="h-7 w-7 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`bg-gradient-to-br border-0 shadow-xl backdrop-blur-sm transform hover:scale-105 transition-all duration-300 ${
-          filteredData.netProfit >= 0 
-            ? 'from-purple-50/80 to-purple-100/80 shadow-purple-500/20' 
-            : 'from-orange-50/80 to-orange-100/80 shadow-orange-500/20'
-        }`}>
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={`text-sm font-semibold ${
-                  filteredData.netProfit >= 0 ? 'text-purple-600' : 'text-orange-600'
-                }`}>
-                  Net Profit
-                </p>
-                <p className={`text-2xl font-bold mt-2 ${
-                  filteredData.netProfit >= 0 ? 'text-purple-900' : 'text-orange-900'
-                }`}>
-                  {formatCurrency(filteredData.netProfit)}
-                </p>
-                <p className={`text-xs mt-2 font-medium ${
-                  filteredData.netProfit >= 0 ? 'text-purple-600' : 'text-orange-600'
-                }`}>
-                  {getDateFilterLabel()}
-                </p>
-              </div>
-              <div className={`h-14 w-14 rounded-xl flex items-center justify-center shadow-lg ${
-                filteredData.netProfit >= 0 
-                  ? 'bg-gradient-to-br from-purple-500 to-purple-600 shadow-purple-500/30' 
-                  : 'bg-gradient-to-br from-orange-500 to-orange-600 shadow-orange-500/30'
-              }`}>
-                <DollarSign className="h-7 w-7 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Transaction Summary for Selected Period */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600 font-medium">Total Transactions</p>
-                <p className="text-xl font-bold text-gray-900">
-                  {filteredData.transactionCount}
-                </p>
-                <p className="text-xs text-gray-600 mt-1">{getDateFilterLabel()}</p>
-              </div>
-              <div className="h-10 w-10 bg-gray-500 rounded-lg flex items-center justify-center">
-                <BarChart3 className="h-5 w-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-red-50 to-red-100 border-red-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-red-600 font-medium">Purchases</p>
-                <p className="text-xl font-bold text-red-900">
-                  {filteredData.buyCount}
-                </p>
-                <p className="text-xs text-red-600 mt-1">{formatCurrency(filteredData.totalBought)}</p>
-              </div>
-              <div className="h-10 w-10 bg-red-500 rounded-lg flex items-center justify-center">
-                <ShoppingCart className="h-5 w-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-green-600 font-medium">Sales</p>
-                <p className="text-xl font-bold text-green-900">
-                  {filteredData.sellCount}
-                </p>
-                <p className="text-xs text-green-600 mt-1">{formatCurrency(filteredData.totalSold)}</p>
-              </div>
-              <div className="h-10 w-10 bg-green-500 rounded-lg flex items-center justify-center">
-                <DollarSign className="h-5 w-5 text-white" />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Low Funds Alert */}
-      {userRole === 'owner' && cashEntries.reduce((sum, entry) => sum + entry.amount, 0) < 10000 && (
-        <Card className="bg-gradient-to-r from-orange-50 to-red-50 border-orange-200">
-          <CardContent className="p-4">
-            <div className="flex items-center space-x-3">
-              <div className="h-10 w-10 bg-orange-500 rounded-full flex items-center justify-center">
-                <span className="text-white font-bold">!</span>
-              </div>
-              <div>
-                <h3 className="font-semibold text-orange-900">Low Funds Alert</h3>
-                <p className="text-sm text-orange-700">
-                  Current balance is below ₱10,000. Consider adding more cash.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+    <>
+      {/* Logout Success Alert */}
+      {showLogoutSuccess && (
+        <Alert className="border-green-200 bg-green-50 mb-0">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-green-800">
+            Successfully signed out! Redirecting...
+          </AlertDescription>
+        </Alert>
       )}
 
-      {/* Quick Action Buttons */}
-      <div className={`grid gap-4 ${userRole === 'owner' ? 'grid-cols-2 lg:grid-cols-6' : 'grid-cols-2'}`}>
-        <Button
-          onClick={() => onNavigate('buy-scrap')}
-          className="h-24 bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white shadow-lg"
-        >
-          <div className="flex flex-col items-center space-y-2">
-            <Plus className="h-6 w-6" />
-            <span className="text-sm font-medium">Buy Scrap</span>
+      <div className="min-h-screen flex items-center justify-center p-4 relative">
+        {/* Animated Background Elements */}
+        <div className="absolute inset-0">
+          {/* Gradient Orbs */}
+          <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
+          <div className="absolute top-0 -right-4 w-72 h-72 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
+          <div className="absolute -bottom-8 left-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+          
+          {/* Grid Pattern */}
+          <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%239C92AC%22%20fill-opacity%3D%220.1%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%221%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
+          
+          {/* Floating Particles */}
+          <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-white rounded-full animate-ping opacity-75"></div>
+          <div className="absolute top-3/4 right-1/4 w-1 h-1 bg-purple-300 rounded-full animate-ping opacity-75 animation-delay-1000"></div>
+          <div className="absolute top-1/2 right-1/3 w-1.5 h-1.5 bg-pink-300 rounded-full animate-ping opacity-75 animation-delay-2000"></div>
+        </div>
+
+        {/* Main Content */}
+        <div className="relative z-10 w-full max-w-7xl">
+          <div className="space-y-8">
+          {/* Integrated Header with User Info */}
+          <div className="pt-8 pb-4 animate-fade-in-up">
+            <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-6">
+                    {/* App Logo */}
+                    <div className="relative">
+                      <div className="h-12 w-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/25 transform hover:scale-105 transition-all duration-300">
+                        <Recycle className="h-7 w-7 text-white" />
+                      </div>
+                      <div className="absolute -inset-1 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl blur-md"></div>
+                    </div>
+                
+                    {/* App Title */}
+                    <div>
+                      <h1 className="text-2xl font-bold bg-gradient-to-r from-white to-purple-200 bg-clip-text text-transparent">
+                        Scrappy
+                      </h1>
+                      <p className="text-sm text-purple-200 font-medium">Junkshop Management System</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-4">
+
+                    {/* User Info and Sign Out */}
+                    <div className="flex items-center space-x-3">
+                      <div className="text-right">
+                        <div className="flex items-center justify-end space-x-2 mt-1">
+                          {userRole === 'owner' ? (
+                            <Badge className="bg-gradient-to-r from-yellow-400/20 to-orange-500/20 text-yellow-200 text-xs border border-yellow-400/30 shadow-sm">👑 Owner</Badge>
+                          ) : (
+                            <Badge className="bg-gradient-to-r from-blue-400/20 to-cyan-500/20 text-blue-200 text-xs border border-blue-400/30 shadow-sm">👤 Employee</Badge>
+                          )}
+                        </div>
+                      </div>
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="text-red-300 hover:text-red-200 hover:bg-red-500/20 border border-red-400/30"
+                        onClick={handleLogoutClick}
+                        disabled={isLoggingOut}
+                      >
+                        {isLoggingOut ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Signing Out...
+                          </>
+                        ) : (
+                          <>
+                            <LogOut className="mr-2 h-4 w-4" />
+                            Sign Out
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </Button>
 
-        <Button
-          onClick={() => onNavigate('sell-scrap')}
-          className="h-24 bg-gradient-to-br from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white shadow-lg"
-        >
-          <div className="flex flex-col items-center space-y-2">
-            <DollarSign className="h-6 w-6" />
-            <span className="text-sm font-medium">Sell Scrap</span>
+          {/* Personalized Greeting */}
+          <div className="pb-4 animate-fade-in-up">
+            <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+              <CardContent className="p-8">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-4xl font-bold text-white mb-2">
+                      Hi, {userName}! 👋
+                    </h1>
+                    <div className="flex items-center space-x-3">
+                      <div className="h-1 w-12 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full"></div>
+                      <h2 className="text-2xl font-semibold bg-gradient-to-r from-purple-200 to-pink-200 bg-clip-text text-transparent">
+                        {businessName}
+                      </h2>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-purple-200">Today</p>
+                    <p className="text-lg font-semibold text-white">
+                      {new Date().toLocaleDateString('en-PH', { 
+                        weekday: 'long', 
+                        month: 'long', 
+                        day: 'numeric' 
+                      })}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        </Button>
 
-        {userRole === 'owner' && (
-          <>
-            <Button
-              onClick={() => onNavigate('payment-processing')}
-              className="h-24 bg-gradient-to-br from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white shadow-lg"
-            >
-              <div className="flex flex-col items-center space-y-2">
-                <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                </svg>
-                <span className="text-sm font-medium">Payment</span>
+        {/* Today's Overview Card */}
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden animate-fade-in-scale stagger-1">
+          <CardContent className="p-8">
+            <div className="flex flex-wrap items-center gap-6">
+              <div className="flex items-center space-x-3">
+                <div className="p-3 bg-gradient-to-r from-purple-500/30 to-pink-500/30 rounded-2xl border border-white/20">
+                  <CalendarIcon className="h-6 w-6 text-white" />
+                </div>
+                <span className="text-lg font-semibold text-white">Today's Overview</span>
               </div>
-            </Button>
-
-            <Button
-              onClick={() => onNavigate('reports')}
-              className="h-24 bg-gradient-to-br from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white shadow-lg"
-            >
-              <div className="flex flex-col items-center space-y-2">
-                <BarChart3 className="h-6 w-6" />
-                <span className="text-sm font-medium">Reports</span>
-              </div>
-            </Button>
-
-            <Button
-              onClick={() => onNavigate('cash')}
-              className="h-24 bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white shadow-lg"
-            >
-              <div className="flex flex-col items-center space-y-2">
-                <Wallet className="h-6 w-6" />
-                <span className="text-sm font-medium">Cash & Expenses</span>
-              </div>
-            </Button>
-
-            <Button
-              onClick={() => onNavigate('employees')}
-              className="h-24 bg-gradient-to-br from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white shadow-lg"
-            >
-              <div className="flex flex-col items-center space-y-2">
-                <Users className="h-6 w-6" />
-                <span className="text-sm font-medium">Employees</span>
-              </div>
-            </Button>
-            
-            <Button
-              onClick={() => onNavigate('all-transactions')}
-              className="h-24 bg-gradient-to-br from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-white shadow-lg"
-            >
-              <div className="flex flex-col items-center space-y-2">
-                <Receipt className="h-6 w-6" />
-                <span className="text-sm font-medium">All Transactions</span>
-              </div>
-            </Button>
-          </>
-        )}
-      </div>
-
-      {/* Recent Transactions for Selected Period */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Clock className="h-5 w-5" />
-              <span>Recent Transactions</span>
+              
+              <Badge className="ml-auto bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-200 border border-purple-400/30 px-4 py-2 text-sm font-medium">
+                Today • {formatCurrency(filteredData.netProfit)} profit
+              </Badge>
             </div>
-            <Badge variant="outline" className="text-xs">
-              {getDateFilterLabel()}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {filteredData.recentTransactions.length > 0 ? (
-            filteredData.recentTransactions.map((transaction) => (
-              <div
-                key={transaction.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors"
-                onClick={() => handleTransactionClick(transaction.id)}
-              >
-                <div className="flex items-center space-x-3">
-                  <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
-                    transaction.type === 'buy' 
-                      ? 'bg-red-100 text-red-600' 
-                      : 'bg-green-100 text-green-600'
-                  }`}>
-                    {transaction.type === 'buy' ? (
-                      <ShoppingCart className="h-5 w-5" />
-                    ) : (
-                      <DollarSign className="h-5 w-5" />
-                    )}
+          </CardContent>
+        </Card>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card className="group relative overflow-hidden bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl hover:shadow-purple-500/40 transition-all duration-500 hover:scale-105 rounded-3xl animate-fade-in-scale stagger-2">
+            <CardContent className="p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-emerald-500/10"></div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-green-200 mb-1">Net Profit</p>
+                    <p className="text-3xl font-bold text-white mb-2">
+                      {formatCurrency(filteredData.netProfit)}
+                    </p>
+                    <p className="text-xs text-green-300">Sales - Purchases</p>
+                  </div>
+                  <div className="h-14 w-14 bg-gradient-to-r from-green-500/30 to-emerald-500/30 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 border border-white/20">
+                    <TrendingUp className="h-7 w-7 text-white" />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="group relative overflow-hidden bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl hover:shadow-red-500/40 transition-all duration-500 hover:scale-105 rounded-3xl animate-fade-in-scale stagger-3">
+            <CardContent className="p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-red-500/10 to-red-600/10"></div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-red-200 mb-1">Purchases</p>
+                    <p className="text-3xl font-bold text-white mb-2">
+                      {formatCurrency(filteredData.totalBought)}
+                    </p>
+                    <p className="text-xs text-red-300">{filteredData.buyCount} completed</p>
+                  </div>
+                  <div className="h-14 w-14 bg-gradient-to-r from-red-500/30 to-red-600/30 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 border border-white/20">
+                    <ShoppingCart className="h-7 w-7 text-white" />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="group relative overflow-hidden bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl hover:shadow-green-500/40 transition-all duration-500 hover:scale-105 rounded-3xl animate-fade-in-scale stagger-4">
+            <CardContent className="p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-green-600/10"></div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-green-200 mb-1">Sales</p>
+                    <p className="text-3xl font-bold text-white mb-2">
+                      {formatCurrency(filteredData.totalSold)}
+                    </p>
+                    <p className="text-xs text-green-300">{filteredData.sellCount} completed</p>
+                  </div>
+                  <div className="h-14 w-14 bg-gradient-to-r from-green-500/30 to-green-600/30 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform duration-300 border border-white/20">
+                    <DollarSign className="h-7 w-7 text-white" />
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Low Funds Alert */}
+        {userRole === 'owner' && cashEntries.reduce((sum, entry) => sum + entry.amount, 0) < 10000 && (
+          <Card className="bg-white/10 backdrop-blur-xl border border-orange-400/30 shadow-2xl rounded-3xl overflow-hidden">
+            <CardContent className="p-6">
+              <div className="absolute inset-0 bg-gradient-to-r from-orange-500/10 to-red-500/10"></div>
+              <div className="relative z-10">
+                <div className="flex items-center space-x-4">
+                  <div className="h-12 w-12 bg-gradient-to-r from-orange-500/30 to-red-500/30 rounded-2xl flex items-center justify-center border border-white/20">
+                    <Zap className="h-6 w-6 text-white" />
                   </div>
                   <div>
-                    <div className="flex items-center space-x-2">
-                      <p className="font-medium">
-                        #{transaction.id} - {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
-                      </p>
-                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs ${
-                        transaction.status === 'completed' ? 'bg-green-100 text-green-800' :
-                        transaction.status === 'for-payment' ? 'bg-blue-100 text-blue-800' :
-                        transaction.status === 'in-progress' ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-red-100 text-red-800'
-                      }`}>
-                        {transaction.status === 'completed' ? 'Completed' :
-                         transaction.status === 'for-payment' ? 'For Payment' :
-                         transaction.status === 'in-progress' ? 'In Progress' :
-                         'Cancelled'}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-500">
-                      {formatDate(transaction.timestamp)} {formatTime(transaction.timestamp)} • {transaction.employee}
+                    <h3 className="font-semibold text-orange-200 text-lg">Low Funds Alert</h3>
+                    <p className="text-sm text-orange-300">
+                      Current balance is below ₱10,000. Consider adding more cash.
                     </p>
                   </div>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <div className="text-right">
-                    <p className={`font-semibold ${
-                      transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'
-                    }`}>
-                      {transaction.type === 'buy' ? '-' : '+'}{formatCurrency(calculateTransactionTotal(transaction))}
-                    </p>
-                    <p className="text-sm text-gray-500">
-                      {transaction.items.length} item{transaction.items.length > 1 ? 's' : ''}
-                    </p>
-                  </div>
-                  <Eye className="h-4 w-4 text-gray-400" />
                 </div>
               </div>
-            ))
-          ) : (
-            <div className="text-center py-8 text-gray-500">
-              <ShoppingCart className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p>No transactions found for {getDateFilterLabel().toLowerCase()}</p>
-              <p className="text-sm">Try selecting a different date range</p>
-            </div>
-          )}
+            </CardContent>
+          </Card>
+        )}
 
-          {userRole === 'owner' && filteredData.recentTransactions.length > 0 && filteredData.transactionCount > 5 && (
-            <div className="pt-3 border-t border-gray-200">
-              <Button 
-                variant="outline" 
-                onClick={() => onNavigate('all-transactions')}
-                className="w-full"
-              >
-                View All {filteredData.transactionCount} Transactions
-              </Button>
+        {/* Quick Actions Grid */}
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+          <Button
+            onClick={() => onNavigate('buy-scrap')}
+            className="h-24 bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 text-white shadow-2xl hover:shadow-blue-500/40 transition-all duration-300 hover:scale-105 rounded-2xl"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-blue-600/10 rounded-2xl"></div>
+            <div className="relative z-10 flex flex-col items-center space-y-2">
+              <Plus className="h-6 w-6" />
+              <span className="text-sm font-medium">Buy Scrap</span>
             </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+          </Button>
+
+          <Button
+            onClick={() => onNavigate('sell-scrap')}
+            className="h-24 bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 text-white shadow-2xl hover:shadow-green-500/40 transition-all duration-300 hover:scale-105 rounded-2xl"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-green-600/10 rounded-2xl"></div>
+            <div className="relative z-10 flex flex-col items-center space-y-2">
+              <DollarSign className="h-6 w-6" />
+              <span className="text-sm font-medium">Sell Scrap</span>
+            </div>
+          </Button>
+
+          <Button
+            onClick={() => onNavigate('all-transactions')}
+            className="h-24 bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 text-white shadow-2xl hover:shadow-indigo-500/40 transition-all duration-300 hover:scale-105 rounded-2xl"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/10 to-indigo-600/10 rounded-2xl"></div>
+            <div className="relative z-10 flex flex-col items-center space-y-2">
+              <Receipt className="h-6 w-6" />
+              <span className="text-sm font-medium">Transactions</span>
+            </div>
+          </Button>
+
+          <Button
+            onClick={() => onNavigate('reports')}
+            className="h-24 bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 text-white shadow-2xl hover:shadow-purple-500/40 transition-all duration-300 hover:scale-105 rounded-2xl"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/10 to-purple-600/10 rounded-2xl"></div>
+            <div className="relative z-10 flex flex-col items-center space-y-2">
+              <BarChart3 className="h-6 w-6" />
+              <span className="text-sm font-medium">Reports</span>
+            </div>
+          </Button>
+
+          <Button
+            onClick={() => onNavigate('cash-management')}
+            className="h-24 bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 text-white shadow-2xl hover:shadow-orange-500/40 transition-all duration-300 hover:scale-105 rounded-2xl"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/10 to-orange-600/10 rounded-2xl"></div>
+            <div className="relative z-10 flex flex-col items-center space-y-2">
+              <Wallet className="h-6 w-6" />
+              <span className="text-sm font-medium">Cash & Expenses</span>
+            </div>
+          </Button>
+
+          <Button
+            onClick={() => onNavigate('employees')}
+            className="h-24 bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 text-white shadow-2xl hover:shadow-gray-500/40 transition-all duration-300 hover:scale-105 rounded-2xl"
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-gray-500/10 to-gray-600/10 rounded-2xl"></div>
+            <div className="relative z-10 flex flex-col items-center space-y-2">
+              <Users className="h-6 w-6" />
+              <span className="text-sm font-medium">Employees</span>
+            </div>
+          </Button>
+        </div>
+
+        {/* Recent Transactions */}
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="p-2 bg-gradient-to-r from-purple-500/30 to-pink-500/30 rounded-xl border border-white/20">
+                  <Clock className="h-5 w-5 text-white" />
+                </div>
+                <span className="text-xl font-semibold text-white">Recent Transactions</span>
+              </div>
+              <Badge className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 text-purple-200 border border-purple-400/30">
+                {dataLoading ? 'Loading...' : `5 recent`}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+            {dataLoading ? (
+              <div className="text-center py-12">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-2xl mb-4 border border-white/20">
+                  <Loader2 className="h-8 w-8 text-purple-300 animate-spin" />
+                </div>
+                <h3 className="text-lg font-semibold text-white mb-2">Loading recent transactions...</h3>
+                <p className="text-purple-200">Fetching the latest transactions</p>
+              </div>
+            ) : filteredData.recentTransactions.length > 0 ? (
+              <div className="space-y-4">
+                {filteredData.recentTransactions.map((transaction, index) => (
+                  <div
+                    key={transaction.id}
+                    className="group flex items-center justify-between p-4 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl hover:bg-white/20 cursor-pointer transition-all duration-300 hover:shadow-lg"
+                    onClick={() => handleTransactionClick(transaction.id)}
+                    style={{ animationDelay: `${index * 100}ms` }}
+                  >
+                    <div className="flex items-center space-x-4">
+                      <div className={`h-12 w-12 rounded-2xl flex items-center justify-center transition-all duration-300 border border-white/20 ${
+                        transaction.type === 'buy' 
+                          ? 'bg-gradient-to-r from-red-500/30 to-red-600/30 text-red-200 group-hover:from-red-500/40 group-hover:to-red-600/40' 
+                          : 'bg-gradient-to-r from-green-500/30 to-green-600/30 text-green-200 group-hover:from-green-500/40 group-hover:to-green-600/40'
+                      }`}>
+                        {transaction.type === 'buy' ? (
+                          <ShoppingCart className="h-6 w-6" />
+                        ) : (
+                          <DollarSign className="h-6 w-6" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center space-x-3">
+                          <p className="font-semibold text-white">
+                            #{transaction.id} - {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
+                          </p>
+                          <Badge className={`${
+                            transaction.status === 'completed' ? 'bg-green-500/20 text-green-200 border-green-400/30' :
+                            transaction.status === 'for-payment' ? 'bg-blue-500/20 text-blue-200 border-blue-400/30' :
+                            transaction.status === 'in-progress' ? 'bg-yellow-500/20 text-yellow-200 border-yellow-400/30' :
+                            'bg-red-500/20 text-red-200 border-red-400/30'
+                          }`}>
+                            {transaction.status === 'completed' ? 'Completed' :
+                             transaction.status === 'for-payment' ? 'For Payment' :
+                             transaction.status === 'in-progress' ? 'In Progress' :
+                             'Cancelled'}
+                          </Badge>
+                        </div>
+                        <p className="text-sm text-purple-200">
+                          {formatDate(new Date(transaction.timestamp))} {formatTime(new Date(transaction.timestamp))} • {transaction.employee}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="text-right">
+                        <p className={`font-bold text-lg ${
+                          transaction.type === 'buy' ? 'text-red-200' : 'text-green-200'
+                        }`}>
+                          {transaction.type === 'buy' ? '-' : '+'}{formatCurrency(Math.abs(calculateTransactionTotal(transaction)))}
+                        </p>
+                        <p className="text-sm text-purple-300">
+                          {transaction.items.length} item{transaction.items.length > 1 ? 's' : ''}
+                        </p>
+                      </div>
+                      <Eye className="h-5 w-5 text-purple-300 group-hover:text-white transition-colors" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-2xl mb-4 border border-white/20">
+                  <ShoppingCart className="h-8 w-8 text-purple-300" />
+                </div>
+                <h3 className="text-lg font-semibold text-white mb-2">No recent transactions</h3>
+                <p className="text-purple-200">Start by buying or selling scrap materials</p>
+              </div>
+            )}
+
+            {userRole === 'owner' && transactions.length > 5 && (
+              <div className="pt-6 border-t border-white/20">
+                <Button 
+                  variant="outline" 
+                  onClick={() => onNavigate('all-transactions')}
+                  className="w-full h-12 rounded-2xl border-2 border-white/30 hover:border-white/50 hover:bg-white/10 text-white transition-all duration-300"
+                >
+                  View all transactions
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+          </div>
+        </div>
+      </div>
+
+      {/* Logout Confirmation Dialog */}
+      <AlertDialog open={showLogoutDialog} onOpenChange={setShowLogoutDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2">
+              <LogOut className="h-5 w-5 text-red-600" />
+              <span>Sign Out Confirmation</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to sign out of Scrappy? You will need to sign back in to access your account.
+              {user?.role === 'employee' && (
+                <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm">
+                  <strong>Note:</strong> Any unsaved work in progress transactions may be lost.
+                </div>
+              )}
+              <div className="mt-2 text-xs text-gray-500">
+                Tip: You can also use <kbd className="px-1.5 py-0.5 bg-gray-100 border rounded text-xs">Ctrl+Shift+L</kbd> to sign out quickly.
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel 
+              onClick={() => setShowLogoutDialog(false)}
+              disabled={isLoggingOut}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleLogout}
+              disabled={isLoggingOut}
+              className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+            >
+              {isLoggingOut ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Signing Out...
+                </>
+              ) : (
+                <>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign Out
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

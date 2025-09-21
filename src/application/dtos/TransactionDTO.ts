@@ -2,7 +2,7 @@ import { Transaction, TransactionItem } from '../../domain/entities';
 
 export interface TransactionCreateDTO {
   type: 'buy' | 'sell';
-  customerType: 'person' | 'company' | 'government';
+  customerType: 'individual' | 'business' | 'government';
   customerName?: string;
   employee?: string;
   location?: string;
@@ -19,7 +19,7 @@ export interface TransactionCreateDTO {
 export interface TransactionUpdateDTO {
   id: string;
   status?: 'in-progress' | 'for-payment' | 'completed' | 'cancelled';
-  customerType?: 'person' | 'company' | 'government';
+  customerType?: 'individual' | 'business' | 'government';
   customerName?: string;
   employee?: string;
   location?: string;

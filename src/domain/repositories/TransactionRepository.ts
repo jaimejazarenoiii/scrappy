@@ -2,7 +2,7 @@ import { Transaction, TransactionItem } from '../entities';
 
 export interface CreateTransactionRequest {
   type: 'buy' | 'sell';
-  customerType: 'person' | 'company' | 'government';
+  customerType: 'individual' | 'business' | 'government';
   customerName?: string;
   employee?: string;
   location?: string;
@@ -19,7 +19,7 @@ export interface CreateTransactionRequest {
 export interface UpdateTransactionRequest {
   id: string;
   status?: 'in-progress' | 'for-payment' | 'completed' | 'cancelled';
-  customerType?: 'person' | 'company' | 'government';
+  customerType?: 'individual' | 'business' | 'government';
   customerName?: string;
   employee?: string;
   location?: string;

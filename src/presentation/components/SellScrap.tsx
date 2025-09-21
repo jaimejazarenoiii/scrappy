@@ -57,7 +57,7 @@ interface DeliveryExpense {
 
 export default function SellScrap({ onBack, onComplete, employees, generateTransactionId, onNavigateToTransaction, onSaveDraft }: SellScrapProps) {
   const [sessionType, setSessionType] = useState<'pickup' | 'delivery' | null>(null);
-  const [customerType, setCustomerType] = useState<'person' | 'company' | 'government'>('person');
+  const [customerType, setCustomerType] = useState<'individual' | 'business' | 'government'>('individual');
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   const [pendingBackgroundSaves, setPendingBackgroundSaves] = useState(0);
@@ -83,6 +83,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
   const [loadingMessage, setLoadingMessage] = useState('');
   const [showSuccess, setShowSuccess] = useState(false);
   const [showError, setShowError] = useState(false);
+  const [transactionCompleted, setTransactionCompleted] = useState(false);
 
   // Generate transaction ID on component mount
   useEffect(() => {
@@ -107,6 +108,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     const draftTransaction: Transaction = {
       id: currentTransactionId,
       type: 'sell',
+      businessId: '00000000-0000-0000-0000-000000000001', // Default business ID
       status: 'in-progress',
       timestamp: new Date().toISOString(),
       customerName: '',
@@ -133,11 +135,16 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
   // Auto-save current progress
   const autoSaveProgress = async () => {
-    if (!onSaveDraft || !draftCreated || !sessionType) return;
+    if (!onSaveDraft || !draftCreated || !sessionType || isLoading || transactionCompleted) return;
+    
+    // Don't auto-save if there are no items yet
+    if (items.length === 0) {
+      console.log('Skipping auto-save - no items to save yet');
+      return;
+    }
 
     // Ensure we have a transaction ID
-    let currentTransactionId = transactionId;
-    if (!currentTransactionId) {
+    if (!transactionId) {
       console.error('No transaction ID available for auto-save');
       return;
     }
@@ -146,6 +153,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
     const mappedItemsForAutoSave = items.map(item => ({
       id: item.id,
+      businessId: '00000000-0000-0000-0000-000000000001', // Default business ID
       name: `${item.name} (${item.category})`, // Match the format used in completeTransaction
       weight: item.weight || 0,
       pieces: item.pieces || 0,
@@ -155,13 +163,14 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     }));
 
     const currentTransaction: Transaction = {
-      id: currentTransactionId,
+      id: transactionId,
       type: 'sell',
+      businessId: '00000000-0000-0000-0000-000000000001', // Default business ID
       status: 'for-payment',
       timestamp: new Date().toISOString(),
       customerName: customerName,
       customerType: customerType,
-      employee: selectedEmployees.length > 0 ? selectedEmployees.join(', ') : 'System',
+      employee: selectedEmployees.join(', ') || 'System',
       total: calculateGrandTotal(),
       subtotal: calculateSubtotal(),
       items: mappedItemsForAutoSave,
@@ -181,9 +190,11 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     setIsAutoSaving(true);
     
     console.log('🔄 Auto-saving SellScrap transaction:', {
-      transactionId: currentTransactionId,
+      transactionId: transactionId,
       itemsCount: items.length,
-      totalAmount: calculateGrandTotal()
+      totalAmount: calculateGrandTotal(),
+      selectedEmployees: selectedEmployees,
+      employeeField: selectedEmployees.join(', ') || 'System'
     });
 
     try {
@@ -382,11 +393,17 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
   };
 
   const toggleEmployee = (employeeName: string) => {
-    setSelectedEmployees(prev => 
-      prev.includes(employeeName)
+    setSelectedEmployees(prev => {
+      const newSelection = prev.includes(employeeName)
         ? prev.filter(name => name !== employeeName)
-        : [...prev, employeeName]
-    );
+        : [...prev, employeeName];
+      console.log('SellScrap employee selection changed:', {
+        employeeName,
+        previousSelection: prev,
+        newSelection: newSelection
+      });
+      return newSelection;
+    });
   };
 
   const addItem = () => {
@@ -527,22 +544,39 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
     try {
       setIsLoading(true);
       setLoadingMessage('Creating transaction...');
+      
+      // Disable auto-save during completion to prevent interference
+      console.log('Disabling auto-save during transaction completion');
 
       console.log('SellScrap completing transaction with items:', items.length, items);
+      console.log('Selected employees:', selectedEmployees);
+      console.log('Session images:', [...capturedImages, ...sessionImages].length);
+      console.log('Customer info:', { customerName, customerType, sessionType });
+
+      // Validate required fields
+      if (selectedEmployees.length === 0) {
+        throw new Error('Please select at least one employee');
+      }
+
+      if (items.length === 0) {
+        throw new Error('Please add at least one item');
+      }
 
       const mappedItems = items.map(item => ({
         id: item.id,
+        businessId: '00000000-0000-0000-0000-000000000001', // Default business ID
         name: `${item.name} (${item.category})`,
-        weight: item.weight,
-        pieces: item.pieces,
-        price: item.pricePerUnit,
-        total: item.total,
-        images: item.images
+        weight: item.weight || 0,
+        pieces: item.pieces || 0,
+        price: item.pricePerUnit || 0,
+        total: item.total || 0,
+        images: item.images || []
       }));
 
       const transaction: Transaction = {
         id: transactionId,
         type: 'sell',
+        businessId: '00000000-0000-0000-0000-000000000001', // Default business ID
         customerType,
         customerName: customerName.trim() || undefined,
         items: mappedItems,
@@ -558,9 +592,14 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       };
 
       console.log('SellScrap final transaction object:', transaction);
+      console.log('Transaction items details:', transaction.items);
+      console.log('Session images details:', transaction.sessionImages);
+      console.log('Employee field in final transaction:', transaction.employee);
 
       await onComplete(transaction);
       
+      console.log('Transaction completed successfully');
+      setTransactionCompleted(true); // Prevent auto-save from overriding
       setShowSuccess(true);
       setTimeout(() => {
         setShowSuccess(false);
@@ -570,8 +609,12 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       }, 2000);
     } catch (error) {
       console.error('Error completing transaction:', error);
+      setLoadingMessage(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setShowError(true);
-      setTimeout(() => setShowError(false), 3000);
+      setTimeout(() => {
+        setShowError(false);
+        setLoadingMessage('');
+      }, 3000);
     } finally {
       setIsLoading(false);
     }
@@ -582,14 +625,14 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       <div className="p-4 max-w-2xl mx-auto">
         <div className="flex items-center space-x-4 mb-6">
           <Button variant="ghost" size="icon" onClick={onBack}>
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-5 w-5 text-white" />
           </Button>
-          <h1 className="text-2xl font-bold">Sell Scrap</h1>
+          <h1 className="text-2xl font-bold text-white">Sell Scrap</h1>
         </div>
 
         <div className="space-y-4">
           <Card 
-            className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-green-300"
+            className="cursor-pointer bg-white/10 backdrop-blur-xl border border-white/20 hover:border-green-400/50 shadow-2xl hover:shadow-green-500/40 transition-all duration-300 rounded-3xl overflow-hidden"
             onClick={() => {
               setSessionType('pickup');
               createDraftTransaction('pickup');
@@ -597,19 +640,19 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
           >
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
-                <div className="h-12 w-12 bg-green-500 rounded-lg flex items-center justify-center">
+                <div className="h-12 w-12 bg-gradient-to-r from-green-500/30 to-emerald-500/30 rounded-lg flex items-center justify-center border border-white/20">
                   <Store className="h-6 w-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-lg">Pickup at Shop</h3>
-                  <p className="text-gray-600">Customer picks up items from the shop</p>
+                  <h3 className="font-semibold text-lg text-white">Pickup at Shop</h3>
+                  <p className="text-purple-200">Customer picks up items from the shop</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
           <Card 
-            className="cursor-pointer hover:shadow-lg transition-shadow border-2 hover:border-blue-300"
+            className="cursor-pointer bg-white/10 backdrop-blur-xl border border-white/20 hover:border-blue-400/50 shadow-2xl hover:shadow-blue-500/40 transition-all duration-300 rounded-3xl overflow-hidden"
             onClick={() => {
               setSessionType('delivery');
               createDraftTransaction('delivery');
@@ -617,12 +660,12 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
           >
             <CardContent className="p-6">
               <div className="flex items-center space-x-4">
-                <div className="h-12 w-12 bg-blue-500 rounded-lg flex items-center justify-center">
+                <div className="h-12 w-12 bg-gradient-to-r from-blue-500/30 to-indigo-500/30 rounded-lg flex items-center justify-center border border-white/20">
                   <Truck className="h-6 w-6 text-white" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-lg">Delivery to Customer</h3>
-                  <p className="text-gray-600">Deliver items to customer location</p>
+                  <h3 className="font-semibold text-lg text-white">Delivery to Customer</h3>
+                  <p className="text-purple-200">Deliver items to customer location</p>
                 </div>
               </div>
             </CardContent>
@@ -633,7 +676,23 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
   }
 
   return (
-    <div className="p-4 max-w-4xl mx-auto space-y-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
+      {/* Animated Background Elements */}
+      <div className="absolute inset-0">
+        {/* Gradient Orbs */}
+        <div className="absolute top-0 -left-4 w-72 h-72 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob"></div>
+        <div className="absolute top-0 -right-4 w-72 h-72 bg-yellow-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-2000"></div>
+        <div className="absolute -bottom-8 left-20 w-72 h-72 bg-pink-500 rounded-full mix-blend-multiply filter blur-xl opacity-70 animate-blob animation-delay-4000"></div>
+        
+        {/* Grid Pattern */}
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%239C92AC%22%20fill-opacity%3D%220.1%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%221%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
+        
+        {/* Floating Particles */}
+        <div className="absolute top-1/4 left-1/4 w-2 h-2 bg-white rounded-full animate-ping opacity-75"></div>
+        <div className="absolute top-3/4 right-1/4 w-1 h-1 bg-purple-300 rounded-full animate-ping opacity-75 animation-delay-1000"></div>
+        <div className="absolute top-1/2 right-1/3 w-1.5 h-1.5 bg-pink-300 rounded-full animate-ping opacity-75 animation-delay-2000"></div>
+      </div>
+
       {/* Hidden file inputs */}
       <input
         type="file"
@@ -658,110 +717,131 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <Button variant="ghost" size="icon" onClick={handleBack}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold">
-              {sessionType === 'pickup' ? 'Shop Pickup Sale' : 'Delivery Sale'}
-            </h1>
-            <Badge variant="secondary" className="mt-1">
-              {sessionType === 'pickup' ? 'Customer Pickup' : 'Delivery Required'}
-            </Badge>
+      <div className="relative z-10 bg-white/10 backdrop-blur-xl border-b border-white/20 shadow-2xl">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-0 min-h-16 py-4 sm:py-0">
+            <div className="flex items-center space-x-4">
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={handleBack}
+                className="text-white hover:text-white hover:bg-white/20 border border-white/20"
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">Back</span>
+              </Button>
+              <div className="hidden sm:block h-6 w-px bg-white/30"></div>
+              <div>
+                <h1 className="text-lg sm:text-xl font-semibold text-white">
+                  {sessionType === 'pickup' ? 'Shop Pickup Sale' : 'Delivery Sale'}
+                </h1>
+                <p className="text-sm text-purple-200">Sell scrap materials to customers</p>
+              </div>
+            </div>
+            
+            <div className="flex items-center space-x-4 sm:space-x-6">
+              {/* Auto-save Status Indicator */}
+              {draftCreated && (
+                <div className="flex items-center space-x-2">
+                  {isAutoSaving || pendingBackgroundSaves > 0 ? (
+                    <div className="flex items-center space-x-2 text-blue-200">
+                      <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                      <span className="text-sm">
+                        {isAutoSaving ? 'Saving...' : `${pendingBackgroundSaves} pending save${pendingBackgroundSaves > 1 ? 's' : ''}...`}
+                      </span>
+                    </div>
+                  ) : lastSaveTime ? (
+                    <div className="flex items-center space-x-2 text-green-200">
+                      <div className="w-2 h-2 bg-green-400 rounded-full"></div>
+                      <span className="text-sm">Saved {lastSaveTime.toLocaleTimeString()}</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center space-x-2 text-purple-300">
+                      <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                      <span className="text-sm">Draft mode</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              {/* Transaction ID */}
+              <div className="text-right">
+                <p className="text-sm font-medium text-white">Transaction ID</p>
+                <Badge className="text-sm font-mono bg-white/10 text-white border border-white/20">
+                  {transactionId}
+                </Badge>
+              </div>
+            </div>
           </div>
-        </div>
-        
-        {/* Auto-save Status Indicator */}
-        {draftCreated && (
-          <div className="flex items-center space-x-2 text-xs mr-4">
-            {isAutoSaving || pendingBackgroundSaves > 0 ? (
-              <div className="flex items-center space-x-1 text-blue-600">
-                <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></div>
-                <span>
-                  {isAutoSaving ? 'Saving...' : `${pendingBackgroundSaves} pending save${pendingBackgroundSaves > 1 ? 's' : ''}...`}
-                </span>
-              </div>
-            ) : lastSaveTime ? (
-              <div className="flex items-center space-x-1 text-green-600">
-                <div className="w-2 h-2 bg-green-600 rounded-full"></div>
-                <span>Saved {lastSaveTime.toLocaleTimeString()}</span>
-              </div>
-            ) : (
-              <div className="flex items-center space-x-1 text-gray-400">
-                <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-                <span>Draft mode</span>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* Transaction ID Display */}
-        <div className="text-right">
-          <Badge variant="outline" className="text-lg px-3 py-1">
-            {transactionId}
-          </Badge>
-          <p className="text-sm text-gray-600 mt-1">Transaction ID</p>
         </div>
       </div>
 
+      {/* Main Content */}
+      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="space-y-8">
+
       {/* Session Setup */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Customer Details</CardTitle>
+      <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+          <CardTitle className="text-white">Customer Details</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <Label>Customer Type</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Customer Type</Label>
               <Select value={customerType} onValueChange={(value: any) => setCustomerType(value)}>
-                <SelectTrigger>
+                <SelectTrigger className="h-12 bg-white/10 border-white/20 text-white focus:border-purple-400 focus:ring-purple-200">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="person">Individual Person</SelectItem>
-                  <SelectItem value="company">Company</SelectItem>
+                  <SelectItem value="individual">Individual</SelectItem>
+                  <SelectItem value="business">Business</SelectItem>
                   <SelectItem value="government">Government</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div>
-              <Label>Customer Name (Optional)</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Customer Name (Optional)</Label>
               <Input
                 placeholder="Enter customer name..."
                 value={customerName}
                 onChange={(e) => setCustomerName(e.target.value)}
+                className="h-12 bg-white/10 border-white/20 text-white placeholder:text-gray-300 focus:border-purple-400 focus:ring-purple-200"
               />
             </div>
           </div>
 
           {sessionType === 'delivery' && (
             <div>
-              <Label>Delivery Address</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Delivery Address</Label>
               <Textarea
                 placeholder="Enter complete delivery address"
                 value={deliveryAddress}
                 onChange={(e) => setDeliveryAddress(e.target.value)}
                 rows={3}
+                className="bg-white/10 border-white/20 text-white placeholder:text-gray-300 focus:border-purple-400 focus:ring-purple-200"
               />
             </div>
           )}
 
-          <div>
-            <Label>Assigned Employees</Label>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2">
+<div>
+                <Label className="text-sm font-medium text-white mb-2 block">Assigned Employees</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {employees.map(employee => (
                 <Button
                   key={employee.id}
                   variant={selectedEmployees.includes(employee.name) ? "default" : "outline"}
                   size="sm"
                   onClick={() => toggleEmployee(employee.name)}
-                  className="justify-start"
+                  className={`justify-start min-h-[2.5rem] py-2 px-3 ${
+                    selectedEmployees.includes(employee.name) 
+                      ? 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white border-0' 
+                      : 'border-white/20 text-white hover:bg-white/20 bg-white/10'
+                  }`}
                 >
-                  <User className="h-4 w-4 mr-2" />
-                  {employee.name}
+                  <User className="h-4 w-4 mr-2 flex-shrink-0" />
+                  <span className="truncate">{employee.name}</span>
                 </Button>
               ))}
             </div>
@@ -770,21 +850,21 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       </Card>
 
       {/* Session Images */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
+      <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+          <CardTitle className="flex items-center space-x-2 text-white">
             <ImageIcon className="h-5 w-5" />
             <span>Session Photos</span>
-            <Badge variant="secondary">{sessionImages.length}</Badge>
+            <Badge className="bg-white/10 text-white border border-white/20">{sessionImages.length}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-3">
-            <Button variant="outline" onClick={captureSessionImageFromCamera}>
+            <Button variant="outline" onClick={captureSessionImageFromCamera} className="border-white/20 text-white hover:bg-white/20 bg-white/10">
               <Camera className="h-4 w-4 mr-2" />
               Take Photos
             </Button>
-            <Button variant="outline" onClick={uploadSessionImageFromGallery}>
+            <Button variant="outline" onClick={uploadSessionImageFromGallery} className="border-white/20 text-white hover:bg-white/20 bg-white/10">
               <Upload className="h-4 w-4 mr-2" />
               Upload Images
             </Button>
@@ -815,16 +895,16 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
       </Card>
 
       {/* Add Items */}
-      <Card data-add-item-card className={addingMoreWeightFor ? 'ring-2 ring-blue-500 ring-opacity-50' : ''}>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
+      <Card data-add-item-card className={`bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden ${addingMoreWeightFor ? 'ring-2 ring-purple-500 ring-opacity-50' : ''}`}>
+        <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+          <CardTitle className="flex items-center justify-between text-white">
             <span>Add Items for Sale</span>
             {addingMoreWeightFor && (
               <div className="flex items-center space-x-2">
-                <Badge variant="default" className="bg-blue-500">
+                <Badge className="bg-gradient-to-r from-purple-500 to-indigo-500 text-white border-0">
                   Adding more: {addingMoreWeightFor}
                 </Badge>
-                <Button variant="ghost" size="sm" onClick={cancelAddMoreWeight}>
+                <Button variant="ghost" size="sm" onClick={cancelAddMoreWeight} className="text-white hover:bg-white/20">
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -834,13 +914,13 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
             <div>
-              <Label>Category</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Category</Label>
               <Select
                 value={newItem.category}
                 onValueChange={(value: 'scrap' | 'reusable') => setNewItem({...newItem, category: value, name: ''})}
                 disabled={!!addingMoreWeightFor}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-12 border-white/20 focus:border-purple-400 focus:ring-purple-200 bg-white/10 text-white">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -851,23 +931,24 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
             </div>
 
             <div>
-              <Label>Item Name</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Item Name</Label>
               <Input
                 placeholder="Enter item name..."
                 value={newItem.name}
                 onChange={(e) => setNewItem({...newItem, name: e.target.value})}
                 disabled={!!addingMoreWeightFor}
+                className="h-12 border-white/20 focus:border-purple-400 focus:ring-purple-200 bg-white/10 text-white placeholder:text-gray-300"
               />
             </div>
 
             <div>
-              <Label>Unit Type</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Unit Type</Label>
               <Select
                 value={newItem.inputType}
                 onValueChange={(value: 'weight' | 'pieces') => setNewItem({...newItem, inputType: value})}
                 disabled={!!addingMoreWeightFor}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-12 border-white/20 focus:border-purple-400 focus:ring-purple-200 bg-white/10 text-white">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -878,7 +959,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
             </div>
 
             <div>
-              <Label>{newItem.inputType === 'weight' ? 'Weight (kg)' : 'Pieces'}</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">{newItem.inputType === 'weight' ? 'Weight (kg)' : 'Pieces'}</Label>
               <Input
                 type="number"
                 step="0.1"
@@ -888,12 +969,12 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                   ...newItem,
                   [newItem.inputType]: e.target.value
                 })}
-                className={addingMoreWeightFor ? 'ring-2 ring-blue-400' : ''}
+                className={`h-12 border-white/20 focus:border-purple-400 focus:ring-purple-200 bg-white/10 text-white placeholder:text-gray-300 ${addingMoreWeightFor ? 'ring-2 ring-purple-400' : ''}`}
               />
             </div>
 
             <div>
-              <Label>Price per {newItem.inputType === 'weight' ? 'kg' : 'piece'}</Label>
+              <Label className="text-sm font-medium text-white mb-2 block">Price per {newItem.inputType === 'weight' ? 'kg' : 'piece'}</Label>
               <Input
                 type="number"
                 step="0.01"
@@ -901,13 +982,18 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                 value={newItem.pricePerUnit}
                 onChange={(e) => setNewItem({...newItem, pricePerUnit: e.target.value})}
                 disabled={!!addingMoreWeightFor}
+                className="h-12 border-white/20 focus:border-purple-400 focus:ring-purple-200 bg-white/10 text-white placeholder:text-gray-300"
               />
             </div>
 
             <div className="flex items-end">
               <Button 
                 onClick={addItem} 
-                className={`w-full ${addingMoreWeightFor ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
+                className={`w-full h-12 ${
+                  addingMoreWeightFor 
+                    ? 'bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600' 
+                    : 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600'
+                } text-white border-0`}
               >
                 <Plus className="h-4 w-4 mr-2" />
                 {addingMoreWeightFor ? 'Add More' : 'Add'}
@@ -917,16 +1003,16 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
           {/* Image Capture Section */}
           <div className="space-y-3">
-            <Label className="flex items-center space-x-2">
+            <Label className="flex items-center space-x-2 text-white">
               <span>Item Photos</span>
-              <Badge variant="secondary">{capturedImages.length}</Badge>
+              <Badge className="bg-white/10 text-white border border-white/20">{capturedImages.length}</Badge>
             </Label>
             <div className="flex flex-wrap gap-3">
-              <Button type="button" variant="outline" onClick={captureImageFromCamera}>
+              <Button type="button" variant="outline" onClick={captureImageFromCamera} className="border-white/20 text-white hover:bg-white/20 bg-white/10">
                 <Camera className="h-4 w-4 mr-2" />
                 Take Photos
               </Button>
-              <Button type="button" variant="outline" onClick={uploadImageFromGallery}>
+              <Button type="button" variant="outline" onClick={uploadImageFromGallery} className="border-white/20 text-white hover:bg-white/20 bg-white/10">
                 <Upload className="h-4 w-4 mr-2" />
                 Upload Images
               </Button>
@@ -959,9 +1045,9 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
       {/* Items List */}
       {items.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Items in Sale</CardTitle>
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="text-white">Items in Sale</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -974,17 +1060,17 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                 const totalImages = itemGroup.reduce((sum, item) => sum + item.images.length, 0);
 
                 return (
-                  <div key={itemKey} className="border border-gray-200 rounded-lg p-3 space-y-3">
+                  <div key={itemKey} className="border border-white/20 rounded-lg p-3 space-y-3 bg-white/10">
                     {/* Group Header */}
-                    <div className="flex items-center justify-between pb-2 border-b border-gray-100">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-white/20">
                       <div className="flex-1">
                         <div className="flex items-center space-x-2">
-                          <h4 className="font-semibold text-lg">{firstItem.name}</h4>
-                          <Badge variant={firstItem.category === 'scrap' ? 'secondary' : 'default'} className="text-xs">
+                          <h4 className="font-semibold text-lg text-white">{firstItem.name}</h4>
+                          <Badge className={`text-xs ${firstItem.category === 'scrap' ? 'bg-white/10 text-white border border-white/20' : 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white border-0'}`}>
                             {firstItem.category}
                           </Badge>
                         </div>
-                        <div className="flex items-center space-x-4 text-sm text-gray-600">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-4 text-sm text-purple-200">
                           <span>
                             Total: {isWeight ? `${totalWeight} kg` : `${totalPieces} pieces`}
                           </span>
@@ -997,7 +1083,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                         variant="outline"
                         size="sm"
                         onClick={() => addMoreWeight(firstItem)}
-                        className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                        className="text-white border-white/20 hover:bg-white/20 bg-white/10 w-full sm:w-auto"
                       >
                         <Copy className="h-4 w-4 mr-2" />
                         Add More Weight
@@ -1007,7 +1093,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                     {/* Individual Entries */}
                     <div className="space-y-2">
                       {itemGroup.map((item, index) => (
-                        <div key={item.id} className="p-2 bg-gray-50 rounded">
+                        <div key={item.id} className="p-2 bg-white/10 rounded border border-white/20">
                           {editingItemId === item.id && editingItem ? (
                             // Edit Mode
                             <div className="space-y-3">
@@ -1079,11 +1165,11 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                               </div>
 
                               <div className="flex justify-end space-x-2">
-                                <Button size="sm" variant="outline" onClick={cancelEditingItem}>
+                                <Button size="sm" variant="outline" onClick={cancelEditingItem} className="border-white/20 text-white hover:bg-white/20 bg-white/10">
                                   <X className="h-3 w-3 mr-1" />
                                   Cancel
                                 </Button>
-                                <Button size="sm" onClick={saveEditedItem}>
+                                <Button size="sm" onClick={saveEditedItem} className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white border-0">
                                   <Check className="h-3 w-3 mr-1" />
                                   Save
                                 </Button>
@@ -1104,7 +1190,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                                       />
                                     ))}
                                     {item.images.length > 3 && (
-                                      <div className="w-12 h-12 bg-gray-200 rounded border-2 border-white flex items-center justify-center text-xs">
+                                      <div className="w-12 h-12 bg-white/10 rounded border-2 border-white/20 flex items-center justify-center text-xs text-white">
                                         +{item.images.length - 3}
                                       </div>
                                     )}
@@ -1112,20 +1198,20 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                                 )}
                                 <div className="flex-1">
                                   <div className="flex items-center space-x-2">
-                                    <span className="text-sm text-gray-500">#{index + 1}</span>
-                                    <span className="text-sm">
+                                    <span className="text-sm text-purple-200">#{index + 1}</span>
+                                    <span className="text-sm text-white">
                                       {item.weight ? `${item.weight} kg` : `${item.pieces} pieces`} × {formatCurrency(item.pricePerUnit)}
                                     </span>
                                   </div>
                                 </div>
                               </div>
                               <div className="flex items-center space-x-3">
-                                <span className="font-medium text-green-600">{formatCurrency(item.total)}</span>
+                                <span className="font-medium text-green-200">{formatCurrency(item.total)}</span>
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => startEditingItem(item)}
-                                  className="h-6 w-6 text-blue-500 hover:text-blue-700"
+                                  className="h-6 w-6 text-white hover:text-blue-200 hover:bg-white/20"
                                 >
                                   <Edit className="h-3 w-3" />
                                 </Button>
@@ -1133,7 +1219,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => removeItem(item.id)}
-                                  className="h-6 w-6 text-red-500 hover:text-red-700"
+                                  className="h-6 w-6 text-white hover:text-red-200 hover:bg-white/20"
                                 >
                                   <Trash2 className="h-3 w-3" />
                                 </Button>
@@ -1153,11 +1239,11 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
       {/* Delivery Expenses */}
       {sessionType === 'delivery' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center justify-between">
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center justify-between text-white">
               Delivery Expenses
-              <Button variant="outline" size="sm" onClick={addDeliveryExpense}>
+              <Button variant="outline" size="sm" onClick={addDeliveryExpense} className="border-white/20 text-white hover:bg-white/20 bg-white/10">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Expense
               </Button>
@@ -1207,7 +1293,7 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
                 ))}
               </div>
             ) : (
-              <p className="text-gray-500 text-center py-4">No delivery expenses added</p>
+              <p className="text-purple-200 text-center py-4">No delivery expenses added</p>
             )}
           </CardContent>
         </Card>
@@ -1215,37 +1301,37 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
 
       {/* Summary */}
       {items.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center space-x-2 text-white">
               <Calculator className="h-5 w-5" />
               <span>Transaction Summary</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex justify-between">
-              <span>Subtotal ({items.length} entries, {Object.keys(groupedItems).length} item types)</span>
-              <span className="text-green-600">{formatCurrency(calculateSubtotal())}</span>
+              <span className="text-white">Subtotal ({items.length} entries, {Object.keys(groupedItems).length} item types)</span>
+              <span className="text-green-200">{formatCurrency(calculateSubtotal())}</span>
             </div>
             
             {sessionType === 'delivery' && deliveryExpenses.length > 0 && (
               <div className="flex justify-between">
-                <span>Delivery Expenses</span>
-                <span className="text-red-600">-{formatCurrency(calculateDeliveryExpenses())}</span>
+                <span className="text-white">Delivery Expenses</span>
+                <span className="text-red-200">-{formatCurrency(calculateDeliveryExpenses())}</span>
               </div>
             )}
             
-            <Separator />
+            <Separator className="bg-white/20" />
             
             <div className="flex justify-between text-lg font-semibold">
-              <span>Net Total</span>
-              <span className="text-green-600">{formatCurrency(calculateGrandTotal())}</span>
+              <span className="text-white">Net Total</span>
+              <span className="text-green-200">{formatCurrency(calculateGrandTotal())}</span>
             </div>
 
             <Button 
               onClick={completeTransaction}
               disabled={selectedEmployees.length === 0 || editingItemId !== null}
-              className="w-full"
+              className="w-full h-14 bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white text-lg font-semibold border-0 shadow-lg"
               size="lg"
             >
               <Receipt className="h-5 w-5 mr-2" />
@@ -1255,18 +1341,20 @@ export default function SellScrap({ onBack, onComplete, employees, generateTrans
         </Card>
       )}
 
-      <ActionLoading
-        isLoading={isLoading}
-        success={showSuccess}
-        error={showError}
-        message={loadingMessage}
-        successMessage="Transaction created successfully!"
-        errorMessage="Failed to create transaction"
-        onClose={() => {
-          setShowSuccess(false);
-          setShowError(false);
-        }}
-      />
+          <ActionLoading
+            isLoading={isLoading}
+            success={showSuccess}
+            error={showError}
+            message={loadingMessage}
+            successMessage="Transaction created successfully!"
+            errorMessage="Failed to create transaction"
+            onClose={() => {
+              setShowSuccess(false);
+              setShowError(false);
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

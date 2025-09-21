@@ -22,7 +22,7 @@ export function useRealtimeData() {
       
       // Load all data in parallel - use fast summary for transactions
       const [transactionsData, employeesData, cashEntriesData] = await Promise.all([
-        supabaseDataService.getTransactionsSummary({ limit: 200 }), // Use fast summary method
+        supabaseDataService.getTransactionsSummary({ limit: 20 }), // Use fast summary method
         supabaseDataService.getAllEmployees(),
         supabaseDataService.getAllCashEntries()
       ]);
@@ -157,11 +157,29 @@ export function useRealtimeData() {
 
   const deleteEmployee = async (employeeId: string) => {
     try {
+      console.log('=== useRealtimeData DELETE START ===');
+      console.log('useRealtimeData: Deleting employee with ID:', employeeId);
+      console.log('Current employees before delete:', employees.length);
+      
       await supabaseDataService.deleteEmployee(employeeId);
+      console.log('useRealtimeData: Employee deleted, refreshing list');
+      
       // Manually refresh employees to ensure UI updates
+      console.log('Getting updated employees list...');
       const updatedEmployees = await supabaseDataService.getAllEmployees();
+      console.log('useRealtimeData: Refreshed employees list:', updatedEmployees.length, 'employees');
+      console.log('Updated employees:', updatedEmployees.map(e => ({ id: e.id, name: e.name })));
+      
+      // Check if the deleted employee is still in the list
+      const deletedEmployeeStillExists = updatedEmployees.find(e => e.id === employeeId);
+      console.log('Deleted employee still exists in refreshed list?', !!deletedEmployeeStillExists);
+      
+      console.log('Setting employees state...');
       setEmployees(updatedEmployees);
+      console.log('useRealtimeData: setEmployees called with', updatedEmployees.length, 'employees');
+      console.log('=== useRealtimeData DELETE END ===');
     } catch (error) {
+      console.error('=== useRealtimeData DELETE ERROR ===');
       console.error('Error deleting employee:', error);
       throw error;
     }
@@ -257,6 +275,61 @@ export function useRealtimeData() {
     }
   };
 
+  // Load financial metrics with optimized queries
+  const loadFinancialMetrics = useCallback(async (options?: {
+    startDate?: string;
+    endDate?: string;
+  }) => {
+    try {
+      return await supabaseDataService.getFinancialMetrics(options);
+    } catch (error) {
+      console.error('Error loading financial metrics:', error);
+      return {
+        currentBalance: 0,
+        totalSpent: 0,
+        totalEarned: 0,
+        netProfit: 0,
+        totalTransactions: 0,
+        totalPurchases: 0,
+        totalSales: 0
+      };
+    }
+  }, []);
+
+  // Load transactions for a specific page
+  const loadTransactionsPage = useCallback(async (options?: {
+    page?: number;
+    limit?: number;
+    startDate?: string;
+    endDate?: string;
+    status?: string[];
+    type?: 'buy' | 'sell';
+  }) => {
+    try {
+      const transactions = await supabaseDataService.getTransactionsPage(options);
+      return transactions;
+    } catch (error) {
+      console.error('Error loading transactions page:', error);
+      return [];
+    }
+  }, []);
+
+  // Load total count for pagination
+  const loadTransactionsCount = useCallback(async (options?: {
+    startDate?: string;
+    endDate?: string;
+    status?: string[];
+    type?: 'buy' | 'sell';
+  }) => {
+    try {
+      const count = await supabaseDataService.getTransactionsCount(options);
+      return count;
+    } catch (error) {
+      console.error('Error loading transactions count:', error);
+      return 0;
+    }
+  }, []);
+
   return {
     // Data
     transactions,
@@ -281,6 +354,9 @@ export function useRealtimeData() {
     generateTransactionId,
     loadTransactionDetails,
     loadAllTransactionsWithItems,
+    loadFinancialMetrics,
+    loadTransactionsPage,
+    loadTransactionsCount,
     refreshData: loadData
   };
 }

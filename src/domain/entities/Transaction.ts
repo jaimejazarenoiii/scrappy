@@ -2,7 +2,7 @@ export interface Transaction {
   id: string;
   type: 'buy' | 'sell';
   status: 'in-progress' | 'for-payment' | 'completed' | 'cancelled';
-  customerType: 'person' | 'company' | 'government';
+  customerType: 'individual' | 'business' | 'government';
   customerName?: string;
   employee?: string;
   location?: string;

@@ -5,7 +5,7 @@ import {
   UpdateTransactionRequest 
 } from '../../../domain';
 import { createClient } from '@supabase/supabase-js';
-import { projectId, publicAnonKey } from '../../../../shared/utils/supabase/info';
+import { projectId, publicAnonKey } from '../../../shared/utils/supabase/info';
 
 // Initialize Supabase client using existing configuration
 const supabaseUrl = `https://${projectId}.supabase.co`;

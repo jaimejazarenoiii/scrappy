@@ -34,7 +34,7 @@ export class CreateTransactionUseCaseImpl implements CreateTransactionUseCase {
       throw new Error('Invalid transaction type');
     }
 
-    if (!request.customerType || !['person', 'company', 'government'].includes(request.customerType)) {
+    if (!request.customerType || !['individual', 'business', 'government'].includes(request.customerType)) {
       throw new Error('Invalid customer type');
     }
 

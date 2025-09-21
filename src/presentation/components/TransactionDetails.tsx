@@ -39,6 +39,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { Transaction, Employee } from '../../infrastructure/database/supabaseService';
+import { useBusinessContext } from '../hooks/useBusinessContext';
 
 interface TransactionDetailsProps {
   transaction: Transaction;
@@ -67,9 +68,22 @@ export default function TransactionDetails({
   readOnly = false,
   userRole = 'owner'
 }: TransactionDetailsProps) {
+  // Safely get business context with fallback
+  let currentBusiness = null;
+  try {
+    const businessContext = useBusinessContext();
+    currentBusiness = businessContext.currentBusiness;
+  } catch (error) {
+    console.warn('Business context not available, using fallback:', error);
+    // Use default business ID as fallback
+    currentBusiness = { id: '00000000-0000-0000-0000-000000000001', name: 'Default Business' };
+  }
+  
   console.log('🔍 TransactionDetails received transaction:', {
     id: transaction.id,
     type: transaction.type,
+    customerType: transaction.customerType,
+    customerName: transaction.customerName,
     subtotal: transaction.subtotal,
     total: transaction.total,
     expenses: transaction.expenses,
@@ -149,15 +163,15 @@ export default function TransactionDetails({
     const statusToUse = status || currentStatus;
     switch (statusToUse) {
       case 'in-progress':
-        return <Badge className="bg-yellow-100 text-yellow-800">In Progress</Badge>;
+        return <Badge className="bg-yellow-500/10 text-yellow-200 border border-yellow-400/20">In Progress</Badge>;
       case 'for-payment':
-        return <Badge className="bg-blue-100 text-blue-800">For Payment</Badge>;
+        return <Badge className="bg-blue-500/10 text-blue-200 border border-blue-400/20">For Payment</Badge>;
       case 'completed':
-        return <Badge className="bg-green-100 text-green-800">Completed</Badge>;
+        return <Badge className="bg-green-500/10 text-green-200 border border-green-400/20">Completed</Badge>;
       case 'cancelled':
-        return <Badge className="bg-red-100 text-red-800">Cancelled</Badge>;
+        return <Badge className="bg-red-500/10 text-red-200 border border-red-400/20">Cancelled</Badge>;
       default:
-        return <Badge variant="secondary">Unknown</Badge>;
+        return <Badge variant="secondary" className="bg-white/10 text-white border border-white/20">Unknown</Badge>;
     }
   };
 
@@ -791,7 +805,8 @@ export default function TransactionDetails({
           pieces: item.pieces,
           price: item.price,
           total: item.total,
-          images: item.images
+          images: item.images,
+          businessId: currentBusiness?.id || '00000000-0000-0000-0000-000000000001'
         })),
         subtotal: calculateItemSubtotal(),
         total: calculateTransactionTotal(),
@@ -852,7 +867,8 @@ export default function TransactionDetails({
         pieces: item.pieces,
         price: item.price,
         total: item.total,
-          images: item.images
+        images: item.images,
+        businessId: currentBusiness?.id || '00000000-0000-0000-0000-000000000001'
       })),
       subtotal: calculateItemSubtotal(),
       total: calculateTransactionTotal(),
@@ -882,24 +898,35 @@ export default function TransactionDetails({
 
 
   return (
-    <div className="p-4 max-w-4xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <Button variant="ghost" size="icon" onClick={onBack}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold">Transaction Details</h1>
-            <div className="flex items-center space-x-2 mt-1">
-              <Badge variant={transaction.type === 'buy' ? 'destructive' : 'default'}>
-                {transaction.type.toUpperCase()}
-              </Badge>
-              {getStatusBadge(transaction.status)}
-              <span className="text-gray-600">#{transaction.id}</span>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
+      {/* Animated Background Elements */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-full blur-3xl animate-blob"></div>
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-br from-blue-500/20 to-indigo-500/20 rounded-full blur-3xl animate-blob animation-delay-2000"></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-br from-pink-500/10 to-purple-500/10 rounded-full blur-3xl animate-blob animation-delay-4000"></div>
+      </div>
+      
+      {/* Grid Pattern */}
+      <div className="absolute inset-0 bg-[url('data:image/svg+xml,%3Csvg%20width%3D%2260%22%20height%3D%2260%22%20viewBox%3D%220%200%2060%2060%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Cg%20fill%3D%22none%22%20fill-rule%3D%22evenodd%22%3E%3Cg%20fill%3D%22%239C92AC%22%20fill-opacity%3D%220.05%22%3E%3Ccircle%20cx%3D%2230%22%20cy%3D%2230%22%20r%3D%221%22/%3E%3C/g%3E%3C/g%3E%3C/svg%3E')] opacity-20"></div>
+      
+      <div className="relative z-10 p-4 max-w-4xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <Button variant="ghost" size="icon" onClick={onBack} className="text-white hover:text-white hover:bg-white/20">
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-2xl font-bold text-white">Transaction Details</h1>
+              <div className="flex items-center space-x-2 mt-1">
+                <Badge variant={transaction.type === 'buy' ? 'destructive' : 'default'} className={transaction.type === 'buy' ? 'bg-red-500/10 text-red-200 border border-red-400/20' : 'bg-green-500/10 text-green-200 border border-green-400/20'}>
+                  {transaction.type.toUpperCase()}
+                </Badge>
+                {getStatusBadge(transaction.status)}
+                <span className="text-purple-200">#{transaction.id}</span>
+              </div>
             </div>
           </div>
-        </div>
         
         <div className="flex items-center space-x-2">
           {!readOnly && !isEditing ? (
@@ -907,19 +934,19 @@ export default function TransactionDetails({
               {canPrintReceipt() && (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                <Button variant="outline">
+                <Button variant="outline" className="text-white border-white/20 hover:bg-white/20 bg-white/10">
                   <Receipt className="h-4 w-4 mr-2" />
                   Print Receipt
                       <ChevronDown className="h-4 w-4 ml-2" />
                 </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start">
-                    <DropdownMenuItem onClick={printThermalReceipt}>
+                  <DropdownMenuContent align="start" className="bg-white/10 backdrop-blur-xl border border-white/20">
+                    <DropdownMenuItem onClick={printThermalReceipt} className="text-white hover:bg-white/20">
                       <PrinterIcon className="h-4 w-4 mr-2" />
                       Print HTML Receipt
                     </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={downloadESCPOSFile}>
+                    <DropdownMenuSeparator className="bg-white/20" />
+                    <DropdownMenuItem onClick={downloadESCPOSFile} className="text-white hover:bg-white/20">
                       <Download className="h-4 w-4 mr-2" />
                       Download ESC/POS Format
                     </DropdownMenuItem>
@@ -931,7 +958,7 @@ export default function TransactionDetails({
               {userRole === 'owner' && currentStatus === 'for-payment' && (
                 <Button 
                   variant="default"
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white"
                   onClick={handleMarkAsPaid}
                   disabled={isMarkingPaid}
                 >
@@ -944,20 +971,21 @@ export default function TransactionDetails({
                 </Button>
               )}
               
-              <Button variant="outline" onClick={startEditing}>
+              <Button variant="outline" onClick={startEditing} className="text-white border-white/20 hover:bg-white/20 bg-white/10">
                 <Edit className="h-4 w-4 mr-2" />
                 Edit
               </Button>
             </>
           ) : isEditing && !readOnly ? (
             <>
-              <Button variant="outline" onClick={cancelEditing}>
+              <Button variant="outline" onClick={cancelEditing} className="text-white border-white/20 hover:bg-white/20 bg-white/10">
                 <X className="h-4 w-4 mr-2" />
                 Cancel
               </Button>
               <Button 
                 onClick={saveChanges}
                 disabled={!hasChanges() || isSavingChanges}
+                className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white"
               >
                 {isSavingChanges ? (
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -968,7 +996,7 @@ export default function TransactionDetails({
               </Button>
             </>
           ) : readOnly ? (
-            <div className="text-sm text-gray-500 bg-gray-100 px-3 py-2 rounded">
+            <div className="text-sm text-purple-200 bg-white/10 px-3 py-2 rounded border border-white/20">
               {userRole === 'employee' ? 'View Only - Employees cannot edit transactions' : 'Read Only'}
             </div>
           ) : null}
@@ -979,9 +1007,9 @@ export default function TransactionDetails({
 
       {/* Transaction Info */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center space-x-2 text-white">
               <Clock className="h-5 w-5" />
               <span>Transaction Info</span>
             </CardTitle>
@@ -989,14 +1017,14 @@ export default function TransactionDetails({
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Date & Time</Label>
-                <p className="text-sm text-gray-600 mt-1">
+                <Label className="text-white">Date & Time</Label>
+                <p className="text-sm text-purple-200 mt-1">
                   {formatDateTime(new Date(transaction.timestamp))}
                 </p>
               </div>
               <div>
-                <Label>Type</Label>
-                <p className="text-sm text-gray-600 mt-1 capitalize">
+                <Label className="text-white">Type</Label>
+                <p className="text-sm text-purple-200 mt-1 capitalize">
                   {transaction.type === 'buy' ? 'Purchase' : 'Sale'}
                 </p>
               </div>
@@ -1004,7 +1032,7 @@ export default function TransactionDetails({
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Status</Label>
+                <Label className="text-white">Status</Label>
                 {isEditing && userRole === 'owner' ? (
                   <Select 
                     value={editedTransaction.status} 
@@ -1013,21 +1041,21 @@ export default function TransactionDetails({
                       status: value
                     })}
                   >
-                    <SelectTrigger className="mt-1">
+                    <SelectTrigger className="mt-1 bg-white/10 border-white/20 text-white">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="in-progress">In Progress</SelectItem>
-                      <SelectItem value="for-payment">For Payment</SelectItem>
-                      <SelectItem value="completed">Completed</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    <SelectContent className="bg-white/10 backdrop-blur-xl border border-white/20">
+                      <SelectItem value="in-progress" className="text-white hover:bg-white/20">In Progress</SelectItem>
+                      <SelectItem value="for-payment" className="text-white hover:bg-white/20">For Payment</SelectItem>
+                      <SelectItem value="completed" className="text-white hover:bg-white/20">Completed</SelectItem>
+                      <SelectItem value="cancelled" className="text-white hover:bg-white/20">Cancelled</SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
                 <div className="mt-1">
                     {getStatusBadge()}
                     {currentStatus === 'for-payment' && userRole !== 'owner' && (
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-xs text-purple-200 mt-1">
                         Only owners can mark transactions as completed
                       </p>
                     )}
@@ -1035,7 +1063,7 @@ export default function TransactionDetails({
                 )}
               </div>
               <div>
-                <Label>Customer Type</Label>
+                <Label className="text-white">Customer Type</Label>
                 {isEditing ? (
                   <Select 
                     value={editedTransaction.customerType} 
@@ -1044,34 +1072,45 @@ export default function TransactionDetails({
                       customerType: value
                     })}
                   >
-                    <SelectTrigger className="mt-1">
+                    <SelectTrigger className="mt-1 bg-white/10 border-white/20 text-white">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="person">Individual Person</SelectItem>
-                      <SelectItem value="company">Company</SelectItem>
-                      <SelectItem value="government">Government</SelectItem>
+                    <SelectContent className="bg-white/10 backdrop-blur-xl border border-white/20">
+                      <SelectItem value="individual" className="text-white hover:bg-white/20">Individual</SelectItem>
+                      <SelectItem value="business" className="text-white hover:bg-white/20">Business</SelectItem>
+                      <SelectItem value="government" className="text-white hover:bg-white/20">Government</SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
-                  <p className="text-sm text-gray-600 mt-1 capitalize">
-                    {transaction.customerType}
+                  <p className="text-sm text-purple-200 mt-1 capitalize">
+                    {transaction.customerType === 'individual' ? 'Individual' : 
+                     transaction.customerType === 'business' ? 'Business' :
+                     transaction.customerType === 'government' ? 'Government' :
+                     transaction.customerType || 'Not specified'}
                   </p>
                 )}
               </div>
             </div>
 
             <div>
-              <Label>Employee</Label>
+              <Label className="text-white">Customer Name</Label>
               <div className="flex items-center space-x-2 mt-1">
-                <User className="h-4 w-4 text-gray-400" />
-                <span className="text-sm text-gray-600">{transaction.employee || 'N/A'}</span>
+                <User className="h-4 w-4 text-purple-400" />
+                <span className="text-sm text-purple-200">{transaction.customerName || 'N/A'}</span>
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-white">Employee</Label>
+              <div className="flex items-center space-x-2 mt-1">
+                <User className="h-4 w-4 text-purple-400" />
+                <span className="text-sm text-purple-200">{transaction.employee || 'N/A'}</span>
               </div>
             </div>
 
             {(transaction.location || isEditing) && (
               <div>
-                <Label>Location</Label>
+                <Label className="text-white">Location</Label>
                 {isEditing ? (
                   <Textarea
                     value={editedTransaction.location || ''}
@@ -1081,12 +1120,12 @@ export default function TransactionDetails({
                     })}
                     placeholder="Enter location details..."
                     rows={2}
-                    className="mt-1"
+                    className="mt-1 bg-white/10 border-white/20 text-white placeholder:text-gray-300"
                   />
                 ) : (
                   <div className="flex items-start space-x-2 mt-1">
-                    <MapPin className="h-4 w-4 text-gray-400 mt-0.5" />
-                    <span className="text-sm text-gray-600">{transaction.location}</span>
+                    <MapPin className="h-4 w-4 text-purple-400 mt-0.5" />
+                    <span className="text-sm text-purple-200">{transaction.location}</span>
                   </div>
                 )}
               </div>
@@ -1094,9 +1133,9 @@ export default function TransactionDetails({
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center space-x-2 text-white">
               <Calculator className="h-5 w-5" />
               <span>Financial Summary</span>
             </CardTitle>
@@ -1104,13 +1143,13 @@ export default function TransactionDetails({
           <CardContent className="space-y-4">
             <div className="space-y-3">
               <div className="flex justify-between">
-                <span>Subtotal</span>
-                <span>{formatCurrency(isEditing ? calculateItemSubtotal() : getDisplaySubtotal())}</span>
+                <span className="text-white">Subtotal</span>
+                <span className="text-white">{formatCurrency(isEditing ? calculateItemSubtotal() : getDisplaySubtotal())}</span>
               </div>
               
               {(transaction.expenses || isEditing) && (
                 <div className="flex justify-between">
-                  <span>Expenses</span>
+                  <span className="text-white">Expenses</span>
                   {isEditing ? (
                     <Input
                       type="number"
@@ -1120,21 +1159,21 @@ export default function TransactionDetails({
                         ...editedTransaction, 
                         expenses: parseFloat(e.target.value) || 0
                       })}
-                      className="w-24 h-8 text-right"
+                      className="w-24 h-8 text-right bg-white/10 border-white/20 text-white"
                     />
                   ) : (
-                    <span className="text-red-600">
+                    <span className="text-red-200">
                       {formatCurrency(transaction.expenses || 0)}
                     </span>
                   )}
                 </div>
               )}
               
-              <Separator />
+              <Separator className="bg-white/20" />
               
               <div className="flex justify-between text-lg font-semibold">
-                <span>Total</span>
-                <span className={transaction.type === 'buy' ? 'text-red-600' : 'text-green-600'}>
+                <span className="text-white">Total</span>
+                <span className={transaction.type === 'buy' ? 'text-red-200' : 'text-green-200'}>
                   {transaction.type === 'buy' ? '-' : '+'}
                   {formatCurrency(isEditing ? calculateTransactionTotal() : getDisplayTotal())}
                 </span>
@@ -1143,10 +1182,10 @@ export default function TransactionDetails({
               {/* Special transaction indicators */}
               <div className="flex flex-wrap gap-2">
                 {transaction.isPickup && (
-                  <Badge variant="secondary">Pickup</Badge>
+                  <Badge variant="secondary" className="bg-white/10 text-white border border-white/20">Pickup</Badge>
                 )}
                 {transaction.isDelivery && (
-                  <Badge variant="secondary">Delivery</Badge>
+                  <Badge variant="secondary" className="bg-white/10 text-white border border-white/20">Delivery</Badge>
                 )}
               </div>
             </div>
@@ -1155,15 +1194,15 @@ export default function TransactionDetails({
       </div>
 
       {/* Items List */}
-      <Card>
-        <CardHeader>
+      <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+        <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
           <CardTitle className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 text-white">
               <Package className="h-5 w-5" />
               <span>Items</span>
             </div>
             {isEditing && (
-              <Button variant="outline" size="sm" onClick={addNewItem}>
+              <Button variant="outline" size="sm" onClick={addNewItem} className="text-white border-white/20 hover:bg-white/20 bg-white/10">
                 <Plus className="h-4 w-4 mr-2" />
                 Add Item
               </Button>
@@ -1175,24 +1214,24 @@ export default function TransactionDetails({
             {(isEditing ? editedItems : transaction.items.map((item, index) => ({ 
               id: `item-${index}`, 
               ...item 
-            }))).map((item, index) => (
-              <div key={item.id || index} className="p-4 border rounded-lg">
+            })            )).map((item, index) => (
+              <div key={item.id || index} className="p-4 border border-white/20 rounded-lg bg-white/10">
                 {isEditing ? (
                   // Edit Mode
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                       <div>
-                        <Label className="text-sm">Item Name</Label>
+                        <Label className="text-sm text-white">Item Name</Label>
                         <Input
                           value={item.name}
                           onChange={(e) => updateItem(item.id, 'name', e.target.value)}
                           placeholder="Enter item name"
-                          className="mt-1"
+                          className="mt-1 bg-white/10 border-white/20 text-white placeholder:text-gray-300"
                         />
                       </div>
 
                       <div>
-                        <Label className="text-sm">
+                        <Label className="text-sm text-white">
                           {item.weight !== undefined ? 'Weight (kg)' : 'Pieces'}
                         </Label>
                         <Input
@@ -1208,12 +1247,12 @@ export default function TransactionDetails({
                               isNaN(value) ? 0 : value
                             );
                           }}
-                          className="mt-1"
+                          className="mt-1 bg-white/10 border-white/20 text-white"
                         />
                       </div>
 
                       <div>
-                        <Label className="text-sm">
+                        <Label className="text-sm text-white">
                           Price per {item.weight !== undefined ? 'kg' : 'piece'}
                         </Label>
                         <Input
@@ -1225,16 +1264,16 @@ export default function TransactionDetails({
                             const value = parseFloat(e.target.value);
                             updateItem(item.id, 'price', isNaN(value) ? 0 : value);
                           }}
-                          className="mt-1"
+                          className="mt-1 bg-white/10 border-white/20 text-white"
                         />
                       </div>
 
                       <div>
-                        <Label className="text-sm">Total</Label>
-                        <div className="mt-1 h-9 px-3 py-2 bg-gray-100 rounded text-sm font-medium flex items-center">
+                        <Label className="text-sm text-white">Total</Label>
+                        <div className="mt-1 h-9 px-3 py-2 bg-white/10 rounded text-sm font-medium flex items-center text-white border border-white/20">
                           {formatCurrency((item.weight || item.pieces || 0) * item.price)}
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-purple-200 mt-1">
                           {item.weight ? `${item.weight} kg` : `${item.pieces} pieces`} × {formatCurrency(item.price)} = {formatCurrency((item.weight || item.pieces || 0) * item.price)}
                         </p>
                       </div>
@@ -1244,7 +1283,7 @@ export default function TransactionDetails({
                           variant="ghost"
                           size="icon"
                           onClick={() => removeItem(item.id)}
-                          className="h-9 w-9 text-red-500 hover:text-red-700"
+                          className="h-9 w-9 text-red-200 hover:text-red-300 hover:bg-white/20"
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -1256,13 +1295,13 @@ export default function TransactionDetails({
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h4 className="font-semibold">{item.name}</h4>
-                        <p className="text-sm text-gray-600">
+                        <h4 className="font-semibold text-white">{item.name}</h4>
+                        <p className="text-sm text-purple-200">
                           {item.weight ? `${item.weight} kg` : `${item.pieces} pieces`} × {formatCurrency(item.price)}
                         </p>
                       </div>
                       <div className="text-right">
-                        <p className="font-semibold">{formatCurrency(item.total)}</p>
+                        <p className="font-semibold text-white">{formatCurrency(item.total)}</p>
                       </div>
                     </div>
                     
@@ -1270,14 +1309,14 @@ export default function TransactionDetails({
                     {item.images && item.images.length > 0 && (
                       <div className="space-y-2">
                         <div className="flex items-center space-x-2">
-                          <ImageIcon className="h-4 w-4 text-gray-600" />
-                          <Label className="text-sm font-medium">Item Photos</Label>
+                          <ImageIcon className="h-4 w-4 text-purple-400" />
+                          <Label className="text-sm font-medium text-white">Item Photos</Label>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                           {item.images.map((imageUrl, imgIndex) => (
                             <div 
                               key={imgIndex} 
-                              className="aspect-square border rounded-lg overflow-hidden bg-gray-50 cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all"
+                              className="aspect-square border border-white/20 rounded-lg overflow-hidden bg-white/10 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all"
                               onClick={() => window.open(imageUrl, '_blank')}
                             >
                               <img 
@@ -1301,24 +1340,24 @@ export default function TransactionDetails({
 
       {/* Session Images */}
       {transaction.sessionImages && transaction.sessionImages.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center space-x-2 text-white">
               <ImageIcon className="h-5 w-5" />
               <span>Transaction Photos</span>
-              <Badge variant="secondary">{transaction.sessionImages.length}</Badge>
+              <Badge variant="secondary" className="bg-white/10 text-white border border-white/20">{transaction.sessionImages.length}</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-purple-200">
                 Photos taken during this transaction session for documentation and verification purposes.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {transaction.sessionImages.map((imageUrl: string | URL | undefined, index: Key | null | undefined) => (
                   <div 
                     key={index} 
-                    className="aspect-video border rounded-lg overflow-hidden bg-gray-50 cursor-pointer hover:ring-2 hover:ring-blue-500 transition-all group"
+                    className="aspect-video border border-white/20 rounded-lg overflow-hidden bg-white/10 cursor-pointer hover:ring-2 hover:ring-purple-500 transition-all group"
                     onClick={() => window.open(imageUrl as string, '_blank')}
                   >
                     <div className="relative w-full h-full">
@@ -1330,8 +1369,8 @@ export default function TransactionDetails({
                       />
                       <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-200 flex items-center justify-center">
                         <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                          <div className="bg-white rounded-full p-2 shadow-lg">
-                            <svg className="h-4 w-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <div className="bg-white/20 backdrop-blur-sm rounded-full p-2 shadow-lg">
+                            <svg className="h-4 w-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
                             </svg>
                           </div>
@@ -1341,7 +1380,7 @@ export default function TransactionDetails({
                   </div>
                 ))}
               </div>
-              <div className="text-xs text-gray-500 text-center">
+              <div className="text-xs text-purple-200 text-center">
                 Click on any image to view in full size
               </div>
             </div>
@@ -1351,21 +1390,22 @@ export default function TransactionDetails({
 
       {/* No Session Images Message */}
       {(!transaction.sessionImages || transaction.sessionImages.length === 0) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
+        <Card className="bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-white/10 to-white/5 border-b border-white/20">
+            <CardTitle className="flex items-center space-x-2 text-white">
               <ImageIcon className="h-5 w-5" />
               <span>Transaction Photos</span>
-              <Badge variant="outline">No photos</Badge>
+              <Badge variant="outline" className="bg-white/10 text-white border-white/20">No photos</Badge>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-gray-500 italic">
+            <p className="text-sm text-purple-200 italic">
               No session photos were captured for this transaction.
             </p>
           </CardContent>
         </Card>
       )}
+      </div>
     </div>
   );
 }

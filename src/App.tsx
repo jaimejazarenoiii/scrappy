@@ -10,8 +10,8 @@ import TransactionsList from './presentation/components/TransactionsList';
 import AllTransactions from './presentation/components/AllTransactions';
 import PaymentProcessing from './presentation/components/PaymentProcessing';
 import Login from './presentation/components/Login';
-import UserHeader from './presentation/components/UserHeader';
 import { AuthProvider, useAuth } from './presentation/contexts/AuthContext';
+import { BusinessProvider } from './presentation/hooks/useBusinessContext';
 import { useRealtimeData } from './presentation/hooks/useRealtimeData';
 import { Transaction, CashEntry, Employee, supabaseDataService } from './infrastructure/database/supabaseService';
 import { Alert, AlertDescription } from './presentation/components/ui/alert';
@@ -82,6 +82,7 @@ function AppContent() {
       // Create a cash entry for this transaction
       const cashEntry = {
         id: crypto.randomUUID(),
+        businessId: transaction.businessId, // Add businessId for multi-tenant support
         type: 'transaction' as const,
         amount: transaction.type === 'buy' ? -transaction.total : transaction.total, // Buy transactions are negative (money out), sell transactions are positive (money in)
         description: `${transaction.type === 'buy' ? 'Purchase' : 'Sale'} - ${transaction.customerName || 'Customer'}`,
@@ -173,10 +174,10 @@ function AppContent() {
   // Show loading state
   if (authLoading || dataLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-6">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-400 mx-auto mb-4"></div>
+          <p className="text-white">Loading...</p>
         </div>
       </div>
     );
@@ -221,12 +222,11 @@ function AppContent() {
       case 'dashboard':
         return (
           <Dashboard 
-            transactions={transactions}
-            cashEntries={cashEntries}
-            currentBalance={availableCash}
             onNavigate={(view: string) => setCurrentView(view)}
             onTransactionClick={handleNavigateToTransaction}
             userRole={user?.role || 'employee'}
+            userName={user?.name || 'User'}
+            businessName="Jazareno Scrap Trading"
           />
         );
 
@@ -271,9 +271,6 @@ function AppContent() {
       case 'reports':
         return (
           <Reports
-            transactions={transactions}
-            cashState={{ entries: cashEntries, currentBalance: availableCash }}
-            employees={employees}
             onBack={() => setCurrentView('dashboard')}
             onTransactionClick={handleNavigateToTransaction}
           />
@@ -297,6 +294,7 @@ function AppContent() {
             onTransactionClick={handleNavigateToTransaction}
             userRole={user?.role || 'employee'}
             onRefresh={refreshData}
+            onUpdateTransactionStatus={updateTransactionStatus}
           />
         );
 
@@ -342,21 +340,18 @@ function AppContent() {
       default:
         return (
           <Dashboard 
-            transactions={transactions}
-            cashEntries={cashEntries}
-            currentBalance={availableCash}
             onNavigate={(view: string) => setCurrentView(view)}
             onTransactionClick={handleNavigateToTransaction}
             userRole={user?.role || 'employee'}
+            userName={user?.name || 'User'}
+            businessName="Jazareno Scrap Trading"
           />
         );
     }
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <UserHeader />
-      
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6">
       <main className="container mx-auto px-4 py-6">
         {renderCurrentView()}
       </main>
@@ -367,7 +362,9 @@ function AppContent() {
 function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <BusinessProvider>
+        <AppContent />
+      </BusinessProvider>
     </AuthProvider>
   );
 }

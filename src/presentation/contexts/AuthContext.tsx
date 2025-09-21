@@ -142,7 +142,8 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
               auth_user_id: data.user.id,
               name: data.user.email?.split('@')[0] || 'User',
               role: 'employee',
-              email: data.user.email
+              email: data.user.email,
+              business_id: '00000000-0000-0000-0000-000000000001' // Default business from migration
             })
             .select()
             .single();
@@ -150,6 +151,21 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
           if (createError) {
             console.error('Error creating profile:', createError);
             throw new Error('Failed to create user profile');
+          }
+
+          // Add user to business_users table for proper access
+          const { error: businessUserError } = await supabase
+            .from('business_users')
+            .insert({
+              business_id: '00000000-0000-0000-0000-000000000001',
+              user_id: data.user.id,
+              role: 'employee',
+              joined_at: new Date().toISOString()
+            });
+
+          if (businessUserError) {
+            console.error('Error adding user to business:', businessUserError);
+            // Don't throw error here as profile was created successfully
           }
 
           const user: User = {
