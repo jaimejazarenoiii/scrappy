@@ -677,7 +677,7 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
+    <div className="min-h-screen relative">
       {/* Animated Background Elements */}
       <div className="absolute inset-0">
         {/* Gradient Orbs */}
@@ -718,7 +718,7 @@ export default function BuyScrap({ onBack, onComplete, employees, currentBalance
       />
 
       {/* Header */}
-      <div className="relative z-10 bg-white/10 backdrop-blur-xl border-b border-white/20 shadow-2xl">
+      <div className="relative z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 sm:gap-0 min-h-16 py-4 sm:py-0">
             <div className="flex items-center space-x-4">

@@ -221,7 +221,7 @@ export default function Dashboard({ onNavigate, onTransactionClick, userRole, us
           </Alert>
         )}
 
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center p-4 relative overflow-hidden">
+        <div className="min-h-screen flex items-center justify-center p-4 relative">
           {/* Animated Background Elements */}
           <div className="absolute inset-0">
             {/* Gradient Orbs */}
@@ -336,7 +336,7 @@ export default function Dashboard({ onNavigate, onTransactionClick, userRole, us
             </div>
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mx-auto">
             <Card 
               className="group relative overflow-hidden bg-white/10 backdrop-blur-xl border border-white/20 shadow-2xl rounded-3xl transition-all duration-500 hover:scale-105 hover:shadow-purple-500/40 cursor-pointer animate-fade-in-scale stagger-1"
               onClick={() => onNavigate('buy-scrap')}
